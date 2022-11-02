@@ -21,17 +21,14 @@ fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
         let _found = false;
         for m in &map {
             // deal with the element
-            <#[Warning(clippy::collapsible_if)>if m.start <= i && i < m.end {
-                if i == m.start {
-                    output.extend(format!("<{}>", m.name).as_bytes());
-                }
-            }</#[Warning(clippy::collapsible_if)>
+            if m.start <= i && i < m.end && i == m.start {
+                output.extend(format!("<{}>", m.name).as_bytes());
+            }
             if m.end == i {
                 match m.note.as_str() {
-                    "None" => { output.extend(format!("</{}>", m.name).as_bytes()) },
-                    _ => { output.extend(format!("</{}>[[{}]]", m.name, m.note).as_bytes()) },
+                    "None" => output.extend(format!("</{}>", m.name).as_bytes()),
+                    _ => output.extend(format!("</{}>[[{}]]", m.name, m.note).as_bytes()),
                 }
-                
             }
         }
         output.push(*c);
@@ -42,77 +39,80 @@ fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
     remove_previously_generated_files();
-    let mut command = <#[Warning(clippy::unwrap_used)>Command::new("cargo")
-        .args(<#[Warning(clippy::needless_borrow)>&["clippy", "--message-format=json"]</#[Warning(clippy::needless_borrow)>)
+    let mut command = Command::new("cargo")
+        .args(["clippy", "--message-format=json"])
         .stdout(Stdio::piped())
         .spawn()
-        .unwrap()</#[Warning(clippy::unwrap_used)>;
-    let reader = std::io::BufReader::new(<#[Warning(clippy::unwrap_used)>command.stdout.take().unwrap()</#[Warning(clippy::unwrap_used)>);
+        .unwrap();
+    let reader = std::io::BufReader::new(command.stdout.take().unwrap());
     let mut map = HashMap::new();
     for message in cargo_metadata::Message::parse_stream(reader) {
-        <#[Warning(clippy::single_match)>match <#[Warning(clippy::unwrap_used)>message.unwrap()</#[Warning(clippy::unwrap_used)> {
-            Message::CompilerMessage(msg) => {
-                for s in msg.message.spans {
-                    let x = <#[Warning(clippy::as_conversions)>s.byte_start as usize</#[Warning(clippy::as_conversions)>;
-                    let y = <#[Warning(clippy::as_conversions)>s.byte_end as usize</#[Warning(clippy::as_conversions)>;
-                    let r = Ran {
-                        // name: msg.message.message.clone(),
-                        name: format!("#[{:?}({})", msg.message.level,
-                            <#[Warning(clippy::unwrap_used)>msg.message.code.clone().unwrap()</#[Warning(clippy::unwrap_used)>.code),
-                        start: x,
-                        end: y,
-                        note: format!("{:?}", s.suggested_replacement),
-                    };
-                    let filename = s.file_name;
-                    <#[Warning(clippy::map_entry)>if !map.contains_key(&filename) {
-                        <#[Warning(clippy::vec_init_then_push)>let mut v = Vec::<Ran>::new();
-                        v.push(r);</#[Warning(clippy::vec_init_then_push)>
-                        map.insert(filename, v);
-                    } else {
-                        let v = <#[Warning(clippy::unwrap_used)>map.get_mut(&filename).unwrap()</#[Warning(clippy::unwrap_used)>;
-                        v.push(r);
-                    }</#[Warning(clippy::map_entry)>
-                }
+        if let Message::CompilerMessage(msg) = message.unwrap() {
+            for s in msg.message.spans {
+                let x = <#[Warning(clippy::as_conversions)>s.byte_start as usize</#[Warning(clippy::as_conversions)>;
+                let y = <#[Warning(clippy::as_conversions)>s.byte_end as usize</#[Warning(clippy::as_conversions)>;
+                let r = Ran {
+                    // name: msg.message.message.clone(),
+                    name: format!(
+                        "#[{:?}({})",
+                        msg.message.level,
+                        msg.message.code.clone().unwrap().code
+                    ),
+                    start: x,
+                    end: y,
+                    note: format!("{:?}", s.suggested_replacement),
+                };
+                let filename = s.file_name;
+                <#[Warning(clippy::map_entry)>if !map.contains_key(&filename) {
+                    let v = vec![r];
+                    map.insert(filename, v);
+                } else {
+                    let v = map.get_mut(&filename).unwrap();
+                    v.push(r);
+                }</#[Warning(clippy::map_entry)>
             }
-            _ => (), // Unknown message
-        }</#[Warning(clippy::single_match)>
+        }
     }
     for file in map.keys() {
-        let source = <#[Warning(clippy::unwrap_used)>read_to_string(file).ok().unwrap()</#[Warning(clippy::unwrap_used)>;
-        let v = <#[Warning(clippy::unwrap_used)>map.get(file).unwrap()</#[Warning(clippy::unwrap_used)>;
+        let source = read_to_string(file).ok().unwrap();
+        let v = map.get(file).unwrap();
         let output = markup(source.as_bytes(), v.to_vec());
         let path = PathBuf::from(file);
-        let file_name = <#[Warning(clippy::unwrap_used)>path
-            .parent()
-            .unwrap()</#[Warning(clippy::unwrap_used)>
-            .join(format!("{}.rs.1",<#[Warning(clippy::unwrap_used)>path.file_stem().unwrap()</#[Warning(clippy::unwrap_used)>.to_string_lossy()));
+        let file_name = path.parent().unwrap().join(format!(
+            "{}.rs.1",
+            path.file_stem().unwrap().to_string_lossy()
+        ));
         println!("Marked warning(s) into {:?}", &file_name);
-        if !<#[Warning(clippy::unwrap_used)>file_name.parent().unwrap()</#[Warning(clippy::unwrap_used)>.exists() {
-            std::fs::create_dir(<#[Warning(clippy::needless_borrow)>&<#[Warning(clippy::unwrap_used)>file_name.parent().unwrap()</#[Warning(clippy::unwrap_used)></#[Warning(clippy::needless_borrow)>).ok();
-        }            
-        std::fs::write(&file_name, <#[Warning(clippy::unwrap_used)>std::str::from_utf8(&output).unwrap()</#[Warning(clippy::unwrap_used)>).ok();
+        if !file_name.parent().unwrap().exists() {
+            std::fs::create_dir(file_name.parent().unwrap()).ok();
+        }
+        std::fs::write(&file_name, std::str::from_utf8(&output).unwrap()).ok();
     }
-    let _output = <#[Warning(clippy::expect_used)>command.wait().expect("Couldn't get cargo's exit status")</#[Warning(clippy::expect_used)>;
+    let _output = command.wait().expect("Couldn't get cargo's exit status");
 }
 
 fn remove_previously_generated_files() {
-    let command = <#[Warning(clippy::unwrap_used)>Command::new("find")
-        .args(<#[Warning(clippy::needless_borrow)>&[".", "-name", "*.rs.1"]</#[Warning(clippy::needless_borrow)>)
+    let command = Command::new("find")
+        .args([".", "-name", "*.rs.1"])
         .stdout(Stdio::piped())
         .spawn()
-        .unwrap()</#[Warning(clippy::unwrap_used)>;
-    let output = <#[Warning(clippy::expect_used)>command
+        .unwrap();
+    let output = command
         .wait_with_output()
-        .expect("failed to aquire programm output")</#[Warning(clippy::expect_used)>.stdout;
-    if <#[Warning(clippy::len_zero)>output.len() != 0</#[Warning(clippy::len_zero)> {
+        .expect("failed to aquire programm output")
+        .stdout;
+    if !output.is_empty() {
         println!("Removed previously generated warning files")
     }
-    <#[Warning(clippy::expect_used)>String::from_utf8(output).expect("programm output was not valid utf-8")</#[Warning(clippy::expect_used)>.split(<#[Warning(clippy::single_char_pattern)>"\n"</#[Warning(clippy::single_char_pattern)>).for_each(|tmp| {
-        let mut command = <#[Warning(clippy::unwrap_used)>Command::new("rm")
-        .args(<#[Warning(clippy::needless_borrow)>&["-f", tmp]</#[Warning(clippy::needless_borrow)>)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap()</#[Warning(clippy::unwrap_used)>;
-        <#[Warning(clippy::expect_used)>command.wait().expect("problem with file deletion")</#[Warning(clippy::expect_used)>;
-    });
+    String::from_utf8(output)
+        .expect("programm output was not valid utf-8")
+        .split('\n')
+        .for_each(|tmp| {
+            let mut command = Command::new("rm")
+                .args(["-f", tmp])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            command.wait().expect("problem with file deletion");
+        });
 }
