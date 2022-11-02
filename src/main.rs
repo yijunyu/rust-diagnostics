@@ -104,12 +104,12 @@ fn remove_previously_generated_files() {
     let output = command
         .wait_with_output()
         .expect("failed to aquire programm output").stdout;
-    if output.len() != 0 {
+    if !output.is_empty() {
         println!("Removed previously generated warning files")
     }
-    String::from_utf8(output).expect("programm output was not valid utf-8").split("\n").for_each(|tmp| {
+    String::from_utf8(output).expect("programm output was not valid utf-8").split('\n').for_each(|tmp| {
         let mut command = Command::new("rm")
-        .args(&["-f", tmp])
+        .args(["-f", tmp])
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
