@@ -11,6 +11,7 @@ struct Ran {
     name: String,
     start: usize,
     end: usize,
+    note: String,
 }
 
 // insert diagnostic code as an markup element around the code causing the diagnostic message
@@ -26,7 +27,11 @@ fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
                 }
             }
             if m.end == i {
-                output.extend(format!("</{}>", m.name).as_bytes());
+                match m.note.as_str() {
+                    "None" => { output.extend(format!("</{}>", m.name).as_bytes()) },
+                    _ => { output.extend(format!("</{}>[[{}]]", m.name, m.note).as_bytes()) },
+                }
+                
             }
         }
         output.push(*c);
@@ -56,6 +61,7 @@ fn main() {
                             msg.message.code.clone().unwrap().code),
                         start: x,
                         end: y,
+                        note: format!("{:?}", s.suggested_replacement),
                     };
                     let filename = s.file_name;
                     if !map.contains_key(&filename) {
