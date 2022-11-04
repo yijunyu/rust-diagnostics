@@ -194,6 +194,5 @@ Ideally, it would be `CDATA` so that it won't interfere with any XML parser. At 
 
 ## Acknowledgement
 
-- Thanks for David Wood, who offered idea that we can use the `--message-format=json` option to get diagnostic information from the Rust compiler, which says tremendous
-effort in modifying the Rust compiler. Now our solution is kind of independent from the Rust compiler implementations.
+- Thanks for David Wood, who offered idea that we can use the `--message-format=json` option to get diagnostic information from the Rust compiler, which saves tremendous effort in modifying the Rust compiler. Now our solution is kind of independent from the Rust compiler implementations.
 
