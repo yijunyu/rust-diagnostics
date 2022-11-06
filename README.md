@@ -9,16 +9,23 @@ analyse the semantics of Rust programas.
 
 Currently we integrate it with `clippy`.
 
-The format of the commented code would look like the following [code](src/main.rs.diagnostics).
+## Installation
+```bash
+cargo install rust-diagnostics
+```
 
-Note that this is a result applying the `rust-diagnostic` utilility on its own implementation, i.e., eating our own dog food :-) 
-We have manually resolved all the clippy warnings according to the clippy rules, except the one on `dbg_macro` to show the results
-as an example.
+## Usage:
+```bash
+warning
+```
 
-## Update
+The [commented code](https://github.com/yijunyu/rust-diagnostics/blob/main/src/main.rs.diagnostics) will be generated from the
+[Rust code](https://github.com/yijunyu/rust-diagnostics/blob/main/src/main.rs).
 
-- [x] Insert two comments around the diagnositic spans;
-- [x] Name the comments by the lint rules, and insert the rendered diagnostics in the second comment, e.g., 
+Note that this is a result of applying the utilility on its own implementation, i.e., eating our own dog food.
+We have manually resolved all the clippy warnings according to the specified clippy rules, 
+except for the one on `dbg_macro` to show the results as an example:
+
 ```rust
                                     /*#[Warning(clippy::dbg_macro)*/dbg!(&r)/*
 #[Warning(clippy::dbg_macro)
@@ -27,6 +34,11 @@ the lint level is defined here
 ensure to avoid having uses of it in version control*/;
 ```
 contains a `Warning` as the diagnostic code, and `clippy::dbg_macro` as the name of the lint rule violated by the code `dbg!(&msg)`. 
+
+## Update
+
+- [x] Insert two comments around the diagnositic spans;
+- [x] Name the comments by the lint rules, and insert the rendered diagnostics in the second comment
 - [x] Insert rendered diagnostic messages in the second comment.
 - [x] Add an option `--fix` to do risky fix whenever possible. 
 
