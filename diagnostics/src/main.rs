@@ -209,8 +209,8 @@ fn main() {
                                     };
                                     /*#[Warning(clippy::dbg_macro)*/dbg!(&r)/*
 #[Warning(clippy::dbg_macro)
-note: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#dbg_macro
-the lint level is defined here
+note: the lint level is defined here
+for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#dbg_macro
 ensure to avoid having uses of it in version control*/;
                                     let filename = s.file_name;
                                     match map.get_mut(&filename) {
