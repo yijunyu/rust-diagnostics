@@ -1,3 +1,60 @@
+#![warn(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::await_holding_lock,
+    clippy::await_holding_refcell_ref,
+    clippy::large_stack_arrays,
+    clippy::match_bool,
+    clippy::needless_bitwise_bool,
+    clippy::empty_enum,
+    clippy::enum_glob_use,
+    clippy::exhaustive_enums,
+    clippy::cast_precision_loss,
+    clippy::float_arithmetic,
+    clippy::float_cmp,
+    clippy::float_cmp_const,
+    clippy::imprecise_flops,
+    clippy::suboptimal_flops,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::ptr_as_ptr,
+    clippy::default_numeric_fallback,
+    clippy::checked_conversions,
+    clippy::integer_arithmetic,
+    clippy::cast_sign_loss,
+    clippy::modulo_arithmetic,
+    clippy::exhaustive_structs,
+    clippy::struct_excessive_bools,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::large_types_passed_by_value,
+    clippy::fn_params_excessive_bools,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::inline_always,
+    clippy::inefficient_to_string,
+    clippy::dbg_macro,
+    clippy::wildcard_imports,
+    clippy::self_named_module_files,
+    clippy::mod_module_files,
+    clippy::disallowed_methods,
+    clippy::disallowed_script_idents,
+    clippy::disallowed_types
+)]
+#![allow(
+    clippy::empty_enum,
+    clippy::enum_clike_unportable_variant,
+    clippy::assertions_on_constants,
+    clippy::enum_glob_use,
+    clippy::expect_fun_call
+)]
+#![deny(
+    text_direction_codepoint_in_comment,
+    text_direction_codepoint_in_literal
+)]
+
 use cargo_metadata::{diagnostic::Diagnostic, Message};
 use std::{
     collections::HashMap,
@@ -5,6 +62,66 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
 };
+
+/**
+ * You can skip the above compiler flags to inserting the following options into `$HOME/.cargo/config`
+```rust
+[target.'cfg(all())']
+rustflags = [
+      "-Wclippy::missing_errors_doc",
+      "-Wclippy::missing_panics_doc",
+      "-Wclippy::await_holding_lock",
+      "-Wclippy::await_holding_refcell_ref",
+      "-Aclippy::assertions_on_constants",
+      "-Wclippy::large_stack_arrays",
+      "-Wclippy::match_bool",
+      "-Wclippy::needless_bitwise_bool",
+      "-Wclippy::empty_enum",
+      "-Aclippy::empty_enum",
+      "-Aclippy::enum_clike_unportable_variant",
+      "-Wclippy::enum_glob_use",
+      "-Aclippy::enum_glob_use",
+      "-Wclippy::exhaustive_enums",
+      "-Wclippy::cast_precision_loss",
+      "-Wclippy::float_arithmetic", 
+      "-Wclippy::float_cmp", 
+      "-Wclippy::float_cmp_const",
+      "-Wclippy::imprecise_flops", 
+      "-Wclippy::suboptimal_flops",
+      "-Wclippy::as_conversions",
+      "-Wclippy::cast_lossless",
+      "-Wclippy::cast_possible_truncation",
+      "-Wclippy::cast_possible_wrap",
+      "-Wclippy::cast_precision_loss",
+      "-Wclippy::ptr_as_ptr",
+      "-Wclippy::default_numeric_fallback",
+      "-Wclippy::checked_conversions",
+      "-Wclippy::integer_arithmetic",
+      "-Wclippy::cast_sign_loss",
+      "-Wclippy::modulo_arithmetic",
+      "-Wclippy::exhaustive_structs",
+      "-Wclippy::struct_excessive_bools",
+      "-Wclippy::unwrap_used",
+      "-Wclippy::expect_used",
+      "-Aclippy::expect_fun_call",
+      "-Wclippy::large_types_passed_by_value",
+      "-Wclippy::fn_params_excessive_bools",
+      "-Wclippy::trivially_copy_pass_by_ref",
+      "-Wclippy::inline_always",
+      "-Wclippy::inefficient_to_string",
+      "-Wclippy::dbg_macro",
+      "-Wclippy::wildcard_imports",
+      "-Wclippy::self_named_module_files", 
+      "-Wclippy::mod_module_files",
+      "-Wclippy::disallowed_methods", 
+      "-Wclippy::disallowed_script_idents", 
+      "-Wclippy::disallowed_types",
+      "-Dtext_direction_codepoint_in_comment",
+      "-Dtext_direction_codepoint_in_literal"
+]
+```
+ */
+
 #[derive(Debug, Clone)]
 struct Ran {
     name: String,
