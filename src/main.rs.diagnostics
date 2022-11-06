@@ -84,7 +84,11 @@ fn main() {
                                         suggestion: format!("{:?}", s.suggested_replacement),
                                         note: format!("{:?}", sub_messages(&msg.message.children)),
                                     };
-                                    dbg!(&r);
+                                    /*#[Warning(clippy::dbg_macro)*/dbg!(&r)/*
+#[Warning(clippy::dbg_macro)
+note: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#dbg_macro
+requested on the command line with `-W clippy::dbg-macro`
+ensure to avoid having uses of it in version control*/;
                                     let filename = s.file_name;
                                     match map.get_mut(&filename) {
                                         Some(v) => v.push(r),
