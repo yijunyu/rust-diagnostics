@@ -41,7 +41,7 @@
     clippy::mod_module_files,
     clippy::disallowed_methods,
     clippy::disallowed_script_idents,
-    clippy::disallowed_types
+    clippy::disallowed_types,
 )]
 #![allow(
     clippy::empty_enum,

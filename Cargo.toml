@@ -1,9 +1,15 @@
 [package]
-name = "warning"
+name = "rust-diagnostics"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = [
+    "Yijun Yu <y.yu@open.ac.uk>",
+]
+description = "Rust assistant that utilizes NLP to enhance the quality of rust code."
+repository = "https://github.com/yijunyu/rust-diagnostics"
+documentation = "https://docs.rs/rust_diagnostics"
+keywords = ["clippy", "diagnostics"]
+license = "Apache-2.0"
 
 [dependencies]
 cargo_metadata = "*"
