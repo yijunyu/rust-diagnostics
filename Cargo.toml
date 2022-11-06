@@ -1,11 +1,11 @@
 [package]
 name = "rust-diagnostics"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = [
     "Yijun Yu <y.yu@open.ac.uk>",
 ]
-description = "Rust assistant that utilizes NLP to enhance the quality of rust code."
+description = "A utility that embeds clippy diagnostics into Rust code."
 repository = "https://github.com/yijunyu/rust-diagnostics"
 documentation = "https://docs.rs/rust_diagnostics"
 keywords = ["clippy", "diagnostics"]

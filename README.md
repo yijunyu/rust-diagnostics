@@ -19,7 +19,7 @@ cargo install rust-diagnostics
 warning
 ```
 
-The [commented code](https://github.com/yijunyu/rust-diagnostics/blob/main/src/main.rs.diagnostics) will be generated from the
+The [commented code](https://github.com/yijunyu/rust-diagnostics/blob/main/diagnostics/src/main.rs) will be generated from the
 [Rust code](https://github.com/yijunyu/rust-diagnostics/blob/main/src/main.rs).
 
 Note that this is a result of applying the utilility on its own implementation, i.e., eating our own dog food.
@@ -41,6 +41,7 @@ contains a `Warning` as the diagnostic code, and `clippy::dbg_macro` as the name
 - [x] Name the comments by the lint rules, and insert the rendered diagnostics in the second comment
 - [x] Insert rendered diagnostic messages in the second comment.
 - [x] Add an option `--fix` to do risky fix whenever possible. 
+- [x] Separate the output files into a different folder, but keep using the same ".rs" file extension
 
 ## Acknowledgement
 

@@ -41,7 +41,7 @@
     clippy::mod_module_files,
     clippy::disallowed_methods,
     clippy::disallowed_script_idents,
-    clippy::disallowed_types,
+    clippy::disallowed_types
 )]
 #![allow(
     clippy::empty_enum,
@@ -83,10 +83,10 @@ rustflags = [
       "-Aclippy::enum_glob_use",
       "-Wclippy::exhaustive_enums",
       "-Wclippy::cast_precision_loss",
-      "-Wclippy::float_arithmetic", 
-      "-Wclippy::float_cmp", 
+      "-Wclippy::float_arithmetic",
+      "-Wclippy::float_cmp",
       "-Wclippy::float_cmp_const",
-      "-Wclippy::imprecise_flops", 
+      "-Wclippy::imprecise_flops",
       "-Wclippy::suboptimal_flops",
       "-Wclippy::as_conversions",
       "-Wclippy::cast_lossless",
@@ -111,10 +111,10 @@ rustflags = [
       "-Wclippy::inefficient_to_string",
       "-Wclippy::dbg_macro",
       "-Wclippy::wildcard_imports",
-      "-Wclippy::self_named_module_files", 
+      "-Wclippy::self_named_module_files",
       "-Wclippy::mod_module_files",
-      "-Wclippy::disallowed_methods", 
-      "-Wclippy::disallowed_script_idents", 
+      "-Wclippy::disallowed_methods",
+      "-Wclippy::disallowed_script_idents",
       "-Wclippy::disallowed_types",
       "-Dtext_direction_codepoint_in_comment",
       "-Dtext_direction_codepoint_in_literal"
@@ -174,7 +174,13 @@ fn main() {
     remove_previously_generated_files();
     let args = vec!["clippy", "--message-format=json"];
     if std::env::args().len() > 1 && args[1] == "--fix" {
-        vec!["clippy", "--message-format=json", "--fix", "--allow-dirty", "--broken-code"];
+        vec![
+            "clippy",
+            "--message-format=json",
+            "--fix",
+            "--allow-dirty",
+            "--broken-code",
+        ];
     }
     if let Ok(mut command) = Command::new("cargo")
         .args(args)
@@ -220,23 +226,15 @@ fn main() {
                 if let Ok(source) = read_to_string(file) {
                     if let Some(v) = map.get(file) {
                         let output = markup(source.as_bytes(), v.to_vec());
-                        let path = PathBuf::from(file);
-                        if let Some(p_path) = path.parent() {
-                            if let Some(stem) = path.file_stem() {
-                                let file_name = p_path.join(PathBuf::from(format!(
-                                    "{}.rs.diagnostics",
-                                    stem.to_string_lossy()
-                                )));
-                                println!("Marked warning(s) into {:?}", &file_name);
-                                if let Some(p) = file_name.parent() {
-                                    if !p.exists() {
-                                        std::fs::create_dir(p).ok();
-                                    }
-                                }
-                                if let Ok(content) = std::str::from_utf8(&output) {
-                                    std::fs::write(&file_name, content).ok();
-                                }
+                        let file_name = PathBuf::from("diagnostics").join(file);
+                        println!("Marked warning(s) into {:?}", &file_name);
+                        if let Some(p) = file_name.parent() {
+                            if !p.exists() {
+                                std::fs::create_dir_all(p).ok();
                             }
+                        }
+                        if let Ok(content) = std::str::from_utf8(&output) {
+                            std::fs::write(&file_name, content).ok();
                         }
                     }
                 }
@@ -262,7 +260,7 @@ fn sub_messages(children: &[Diagnostic]) -> String {
 
 fn remove_previously_generated_files() {
     if let Ok(command) = Command::new("find")
-        .args([".", "-name", "*.rs.diagnostics"])
+        .args(["diagnostics", "-name", "*.rs"])
         .stdout(Stdio::piped())
         .spawn()
     {
