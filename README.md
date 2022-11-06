@@ -16,7 +16,7 @@ cargo install rust-diagnostics
 
 ## Usage:
 ```bash
-warning
+rust-diagnostics [--fix]
 ```
 
 The [commented code](https://github.com/yijunyu/rust-diagnostics/blob/main/diagnostics/src/main.rs) will be generated from the
