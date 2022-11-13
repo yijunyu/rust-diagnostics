@@ -9,9 +9,7 @@ pub enum Language {
 
 impl Language {
     pub fn all() -> Vec<Language> {
-        vec![
-            Language::Rust,
-        ]
+        vec![Language::Rust]
     }
 
     pub fn language(&self) -> tree_sitter::Language {

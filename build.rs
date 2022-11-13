@@ -20,5 +20,4 @@ fn main() {
         .warnings(false)
         .file(rust_dir.join("scanner.c"))
         .compile("tree_sitter_rust_scanner");
-
 }

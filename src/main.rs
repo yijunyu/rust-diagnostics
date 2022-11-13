@@ -61,7 +61,6 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     fs::read_to_string,
-    path::PathBuf,
     process::{Command, Stdio},
 };
 use tree_sitter::{Parser, QueryCursor};
@@ -213,7 +212,7 @@ fn splitup<'a>(
             let name = &captures[capture.index as usize];
             let node = capture.node;
             Ok(ExtractedNode {
-                name: name,
+                name,
                 start_byte: node.start_byte(),
                 end_byte: node.end_byte(),
             })
@@ -229,19 +228,31 @@ fn splitup<'a>(
     Ok(output)
 }
 
-// Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
-fn main() {
-    remove_previously_generated_files();
-    let args = vec!["clippy", "--message-format=json"];
-    if std::env::args().len() > 1 && args[1] == "--fix" {
-        vec![
+// run cargo clippy --fix and ignore the output
+fn run_clippy_fix() {
+    let args = vec![
             "clippy",
             "--message-format=json",
             "--fix",
             "--allow-dirty",
             "--broken-code",
         ];
-    }
+    if let Ok(mut command) = Command::new("cargo")
+        .args(args)
+        .stdout(Stdio::null())
+        .spawn()
+    {
+        command.wait().ok();
+    } 
+}
+ 
+// Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
+fn main() {
+    remove_previously_generated_files("diagnostics", "*.rs");
+    remove_previously_generated_files("original", "*.rs");
+    remove_previously_generated_files(".", "*.rs.1");
+    remove_previously_generated_files(".", "*.rs.2");
+    let args = vec!["clippy", "--message-format=json"];
     if let Ok(mut command) = Command::new("cargo")
         .args(args)
         .stdout(Stdio::piped())
@@ -267,7 +278,6 @@ fn main() {
                                         suggestion: format!("{:?}", s.suggested_replacement),
                                         note: format!("{:?}", sub_messages(&msg.message.children)),
                                     };
-                                    dbg!(&r);
                                     let filename = s.file_name;
                                     match map.get_mut(&filename) {
                                         Some(v) => v.push(r),
@@ -282,46 +292,80 @@ fn main() {
                     }
                 }
             }
+            let mut _origin_map: HashMap<String, &[u8]> = HashMap::new();
+            let mut _markup_map: HashMap<String, &[u8]> = HashMap::new();
             for file in map.keys() {
                 if let Ok(source) = read_to_string(file) {
                     if let Some(v) = map.get(file) {
-                        let original = source.as_bytes();
-                        let output = markup(source.as_bytes(), v.to_vec());
-                        let mut parser = Parser::new();
-                        if let Ok(orig_items) =
-                            splitup(&mut parser, language::Language::Rust.language(), original)
-                        {
-                            if let Ok(output_items) =
-                                splitup(&mut parser, language::Language::Rust.language(), &output)
-                            {
-                                dbg!(&orig_items);
-                                dbg!(&output_items);
-                                orig_items.iter().map(|x| {
-                                    
-
-                                });
-                            }
-                        }
-                        let file_name = PathBuf::from("diagnostics").join(file);
-                        let orig_name = PathBuf::from("original").join(file);
-                        println!("Marked warning(s) into {:?}", &file_name);
-                        if let Some(p) = file_name.parent() {
-                            if !p.exists() {
-                                std::fs::create_dir_all(p).ok();
-                            }
-                        }
-                        if let Some(o) = orig_name.parent() {
-                            if !o.exists() {
-                                std::fs::create_dir_all(o).ok();
-                            }
-                        }
-                        if let Ok(content) = std::str::from_utf8(&output) {
-                            std::fs::write(&file_name, content).ok();
-                            std::fs::write(&orig_name, original).ok();
-                        }
-                    }
+                        let _origin = source.as_bytes();
+                        // let _markedup = markup(&_origin, v.to_vec());
+			_origin_map.insert(file.to_string(), &_origin);
+			// _markup_map.insert(file.to_string(), &_markedup);
+		    }
                 }
             }
+	    run_clippy_fix();
+	   /*
+            for file in map.keys() {
+		let input = origin_map[file];
+		let markedup = markup_map[file];
+                if let Ok(source) = read_to_string(file) {
+                    if let Some(v) = map.get(file) {
+                        let output = source.as_bytes();
+			let file_name = PathBuf::from("diagnostics").join(file);
+			let orig_name = PathBuf::from("original").join(file);
+			let trans_name = PathBuf::from("transform").join(file);
+			println!("Marked warning(s) into {:?}", &file_name);
+			if let Some(p) = file_name.parent() {
+			    if !p.exists() {
+				std::fs::create_dir_all(p).ok();
+			    }
+			}
+			if let Some(o) = orig_name.parent() {
+			    if !o.exists() {
+				std::fs::create_dir_all(o).ok();
+			    }
+			}
+			if let Ok(content) = std::str::from_utf8(&markedup) {
+			    std::fs::write(&file_name, content).ok();
+			    std::fs::write(&orig_name, input).ok();
+			}
+			let mut parser = Parser::new();
+			if let Ok(orig_items) =
+			    splitup(&mut parser, language::Language::Rust.language(), &input)
+			{
+			    if let Ok(output_items) =
+				splitup(&mut parser, language::Language::Rust.language(), &output)
+			    {
+				if let Some(t) = trans_name.parent() {
+				    let path = PathBuf::from(&file);
+				    let p = path.file_stem().unwrap();
+				    let pp = t.join(&p);
+				    if !pp.exists() {
+					std::fs::create_dir_all(&pp).ok();
+				    }
+				    for (k1, v1) in orig_items.iter() {
+					for (k2, v2) in output_items.iter() {
+					    if k1 == k2 && v1 != v2 {
+						let trans_filename =
+						    pp.join(format!("{}.rs.2", &k1));
+						let transform = format!(
+						    "{}\n//--------------------------\n{}",
+						    &std::str::from_utf8(&v1).unwrap(),
+						    &std::str::from_utf8(&v2).unwrap()
+						);
+						// dbg!(&trans_filename);
+						std::fs::write(&trans_filename, transform).ok();
+					    }
+					}
+				    }
+				}
+			    }
+			}
+		    }
+		}
+            }
+*/
             command.wait().ok();
         }
     }
@@ -341,15 +385,16 @@ fn sub_messages(children: &[Diagnostic]) -> String {
         .join("\n")
 }
 
-fn remove_previously_generated_files() {
+// remove the previously generated files under folder, matching with the pattern
+fn remove_previously_generated_files(folder: &str, pattern: &str) {
     if let Ok(command) = Command::new("find")
-        .args(["diagnostics", "-name", "*.rs"])
+        .args([folder, "-name", pattern])
         .stdout(Stdio::piped())
         .spawn()
     {
         if let Ok(output) = command.wait_with_output() {
             if !output.stdout.is_empty() {
-                println!("Removed previously generated warning files")
+                println!("Removed previously generated warning files in {folder} matching with {pattern}")
             }
             if let Ok(s) = String::from_utf8(output.stdout) {
                 s.split('\n').for_each(|tmp| {
