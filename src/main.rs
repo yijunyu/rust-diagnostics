@@ -54,14 +54,17 @@
     text_direction_codepoint_in_comment,
     text_direction_codepoint_in_literal
 )]
-
+mod language;
 use cargo_metadata::{diagnostic::Diagnostic, Message};
+use serde::Serialize;
+use tree_sitter::{Parser, QueryCursor};
 use std::{
     collections::HashMap,
     fs::read_to_string,
     path::PathBuf,
     process::{Command, Stdio},
 };
+use anyhow::{Context, Result};
 
 /**
  * You can skip the above compiler flags to inserting the following options into `$HOME/.cargo/config`
@@ -169,6 +172,64 @@ fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
     output
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExtractedNode<'query> {
+    name: &'query str,
+    start_byte: usize,
+    end_byte: usize,
+}
+
+fn splitup<'a>(
+    parser: &mut Parser,
+    ts_language: tree_sitter::Language,
+    source: &'a [u8],
+) -> Result<HashMap<usize, &'a [u8]>> {
+    parser
+        .set_language(ts_language)
+        .context("could not set language")?;
+    let tree = parser
+        .parse(&source, None)
+        .context("could not parse to a tree. This is an internal error and should be reported.")?;
+    let query = language::Language::Rust
+        .parse_query(
+            "([
+                (function_item) @fn
+                (type_item) @fn
+                (enum_item) @fn
+                (union_item) @fn
+                (struct_item) @fn
+                (impl_item) @fn
+                (trait_item) @fn 
+                (static_item) @fn 
+            ])",
+        )
+        .unwrap();
+    let captures = query.capture_names().to_vec();
+    let mut cursor = QueryCursor::new();
+    let extracted = cursor
+        .matches(&query, tree.root_node(), source)
+        .flat_map(|query_match| query_match.captures)
+        .map(|capture| {
+            let name = &captures[capture.index as usize];
+            let node = capture.node;
+            Ok(ExtractedNode {
+                name: name,
+                start_byte: node.start_byte(),
+                end_byte: node.end_byte(),
+            })
+        })
+        .collect::<Result<Vec<ExtractedNode>>>()?;
+    let mut output: HashMap<usize, &[u8]> = HashMap::new();
+    for m in extracted {
+        if m.name == "fn" {
+            let code = std::str::from_utf8(&source[m.start_byte..m.end_byte]).unwrap();
+            output.insert(m.start_byte, code.as_bytes());
+        }
+    }
+    Ok(output)
+}
+
+
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
     remove_previously_generated_files();
@@ -207,7 +268,7 @@ fn main() {
                                         suggestion: format!("{:?}", s.suggested_replacement),
                                         note: format!("{:?}", sub_messages(&msg.message.children)),
                                     };
-                                    let _ = &r;
+                                    dbg!(&r);
                                     let filename = s.file_name;
                                     match map.get_mut(&filename) {
                                         Some(v) => v.push(r),
@@ -227,6 +288,11 @@ fn main() {
                     if let Some(v) = map.get(file) {
                         let original = source.as_bytes();
                         let output = markup(source.as_bytes(), v.to_vec());
+                        let mut parser = Parser::new();
+                        let orig_items = splitup(&mut parser, 
+                            language::Language::Rust.language(), 
+                            original);
+                        dbg!(&orig_items);
                         let file_name = PathBuf::from("diagnostics").join(file);
                         let orig_name = PathBuf::from("original").join(file);
                         println!("Marked warning(s) into {:?}", &file_name);
