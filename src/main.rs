@@ -55,16 +55,16 @@
     text_direction_codepoint_in_literal
 )]
 mod language;
+use anyhow::{Context, Result};
 use cargo_metadata::{diagnostic::Diagnostic, Message};
 use serde::Serialize;
-use tree_sitter::{Parser, QueryCursor};
 use std::{
     collections::HashMap,
     fs::read_to_string,
     path::PathBuf,
     process::{Command, Stdio},
 };
-use anyhow::{Context, Result};
+use tree_sitter::{Parser, QueryCursor};
 
 /**
  * You can skip the above compiler flags to inserting the following options into `$HOME/.cargo/config`
@@ -229,7 +229,6 @@ fn splitup<'a>(
     Ok(output)
 }
 
-
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
     remove_previously_generated_files();
@@ -289,10 +288,20 @@ fn main() {
                         let original = source.as_bytes();
                         let output = markup(source.as_bytes(), v.to_vec());
                         let mut parser = Parser::new();
-                        let orig_items = splitup(&mut parser, 
-                            language::Language::Rust.language(), 
-                            original);
-                        dbg!(&orig_items);
+                        if let Ok(orig_items) =
+                            splitup(&mut parser, language::Language::Rust.language(), original)
+                        {
+                            if let Ok(output_items) =
+                                splitup(&mut parser, language::Language::Rust.language(), &output)
+                            {
+                                dbg!(&orig_items);
+                                dbg!(&output_items);
+                                orig_items.iter().map(|x| {
+                                    
+
+                                });
+                            }
+                        }
                         let file_name = PathBuf::from("diagnostics").join(file);
                         let orig_name = PathBuf::from("original").join(file);
                         println!("Marked warning(s) into {:?}", &file_name);
