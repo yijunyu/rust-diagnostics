@@ -229,16 +229,24 @@ ensure to avoid having uses of it in version control*/;
             for file in map.keys() {
                 if let Ok(source) = read_to_string(file) {
                     if let Some(v) = map.get(file) {
+                        let original = source.as_bytes();
                         let output = markup(source.as_bytes(), v.to_vec());
                         let file_name = PathBuf::from("diagnostics").join(file);
+                        let orig_name = PathBuf::from("original").join(file);
                         println!("Marked warning(s) into {:?}", &file_name);
                         if let Some(p) = file_name.parent() {
                             if !p.exists() {
                                 std::fs::create_dir_all(p).ok();
                             }
                         }
+                        if let Some(o) = orig_name.parent() {
+                            if !o.exists() {
+                                std::fs::create_dir_all(o).ok();
+                            }
+                        }
                         if let Ok(content) = std::str::from_utf8(&output) {
                             std::fs::write(&file_name, content).ok();
+                            std::fs::write(&orig_name, original).ok();
                         }
                     }
                 }
