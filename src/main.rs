@@ -298,7 +298,7 @@ fn main() {
                 if let Ok(source) = read_to_string(file) {
                     if let Some(v) = map.get(file) {
                         let _origin = source.as_bytes();
-                        // let _markedup = markup(&_origin, v.to_vec());
+                        let _markedup = markup(&_origin, v.to_vec());
 			_origin_map.insert(file.to_string(), &_origin);
 			// _markup_map.insert(file.to_string(), &_markedup);
 		    }
