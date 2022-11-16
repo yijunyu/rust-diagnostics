@@ -42,8 +42,8 @@ contains a `Warning` as the diagnostic code, and `clippy::dbg_macro` as the name
 - [x] Insert rendered diagnostic messages in the second comment.
 - [x] Add an option `--fix` to do risky fix whenever possible. 
 - [x] Separate the output files into a different folder, but keep using the same ".rs" file extension
-- [x] Measure the number of warnings per KLOC
-- [x] Store orginal code in the `original` folder when `--fix` is used, so that it is possible to compare before and after of desirable fixing transformations.
+- [x] Measure the number of warnings per KLOC through `count_diagnostics.sh`
+- [x] Store the transformation results before and after `clippy --fix` into the `transform` folder 
 
 ## Acknowledgement
 

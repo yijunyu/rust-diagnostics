@@ -57,6 +57,7 @@
 mod language;
 use anyhow::{Context, Result};
 use cargo_metadata::{diagnostic::Diagnostic, Message};
+use itertools::Itertools;
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -247,6 +248,12 @@ fn run_clippy_fix() {
     }
 }
 
+// restore the original file
+fn restore_original(file_name: &String, content: &String) {
+    dbg!(file_name);
+    std::fs::write(file_name, content).ok();
+}
+
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
     remove_previously_generated_files("diagnostics", "*.rs"); // marked up
@@ -348,26 +355,31 @@ fn main() {
                                         if !pp.exists() {
                                             std::fs::create_dir_all(&pp).ok();
                                         }
-                                        for (k1, v1) in orig_items.iter() {
-                                            for (k2, v2) in output_items.iter() {
-                                                if k1 == k2 && v1 != v2 {
-                                                    let trans_filename1 = pp.join(format!("{}.rs.2", &k1));
-                                                    let trans_filename2 = pp.join(format!("{}.rs.3", &k1));
+                                        let mut offset = 0_i32;
+                                        for k1 in orig_items.keys().sorted() {
+                                            let v1 = orig_items.get(k1).unwrap();
+                                            for k2 in output_items.keys().sorted() {
+                                                let v2 = output_items.get(k2).unwrap();
+                                                if (*k1 as i32 + offset) == (*k2 as i32) && *v1 != *v2
+                                                {
+                                                    let trans_filename1 =
+                                                        pp.join(format!("{}.rs.2", &k1));
+                                                    let trans_filename2 =
+                                                        pp.join(format!("{}.rs.3", &k1));
                                                     if let Ok(vv1) = std::str::from_utf8(v1) {
                                                         if let Ok(vv2) = std::str::from_utf8(v2) {
                                                             let _ = &trans_filename1;
-                                                            std::fs::write(
-                                                                &trans_filename1,
-                                                                vv1,
-                                                            )
-                                                            .ok();
-                                                            std::fs::write(
-                                                                &trans_filename2,
-                                                                vv2,
-                                                            )
-                                                            .ok();
+                                                            std::fs::write(&trans_filename1, vv1)
+                                                                .ok();
+                                                            std::fs::write(&trans_filename2, vv2)
+                                                                .ok();
+                                                            offset += (v2.len() as i32
+                                                                - v1.len() as i32)
+                                                                as i32;
+                                                            dbg!(offset);
                                                         }
                                                     }
+                                                    break;
                                                 }
                                             }
                                         }
@@ -377,6 +389,7 @@ fn main() {
                         }
                     }
                 }
+                restore_original(file, input);
             }
             command.wait().ok();
         }
