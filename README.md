@@ -45,7 +45,8 @@ contains a `Warning` as the diagnostic code, and `clippy::dbg_macro` as the name
 - [x] Measure the number of warnings per KLOC through `count_diagnostics.sh`
 - [x] Store the transformation results before and after `clippy --fix` into the `transform` folder 
 - [x] list the marked rules applied to the transformations
-- [ ] Select only the relevant marked rules
+- [x] Select only the relevant marked rules
+- [ ] Narrow scope of matching patterns for the fixes
 
 ## Acknowledgement
 

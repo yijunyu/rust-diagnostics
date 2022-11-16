@@ -174,11 +174,13 @@ fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
 }
 
 // list the rules as comments
-fn markup_rules(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
+fn markup_rules(start: usize, end: usize, map: Vec<Ran>) -> Vec<u8> {
     let mut output = Vec::new();
-        for m in &map {
+    for m in &map {
+        if start <= m.start && m.end <= end {
             output.extend(format!("/*{}*/\n", m.name).as_bytes());
         }
+    }
     output
 }
 
@@ -312,18 +314,13 @@ fn main() {
             }
             let mut origin_map: HashMap<String, String> = HashMap::new();
             let mut markup_map: HashMap<String, String> = HashMap::new();
-            let mut marked_rules: HashMap<String, String> = HashMap::new();
             for file in map.keys() {
                 if let Ok(source) = read_to_string(file) {
                     if let Some(v) = map.get(file) {
                         let markedup = &markup(source.as_bytes(), v.to_vec());
-                        let markedrules = &markup_rules(source.as_bytes(), v.to_vec());
                         origin_map.insert(file.to_string(), source);
                         if let Ok(s) = std::str::from_utf8(markedup) {
                             markup_map.insert(file.to_string(), s.to_string());
-                        }
-                        if let Ok(s) = std::str::from_utf8(markedrules) {
-                            marked_rules.insert(file.to_string(), s.to_string());
                         }
                     }
                 }
@@ -332,9 +329,8 @@ fn main() {
             for file in map.keys() {
                 let input = &origin_map[file];
                 let markedup = &markup_map[file];
-                let markedrules = &marked_rules[file];
                 if let Ok(source) = read_to_string(file) {
-                    if let Some(_v) = map.get(file) {
+                    if let Some(v) = map.get(file) {
                         let output = source.as_bytes();
                         let file_name = PathBuf::from("diagnostics").join(file);
                         let orig_name = PathBuf::from("original").join(file);
@@ -375,7 +371,8 @@ fn main() {
                                             let v1 = orig_items.get(k1).unwrap();
                                             for k2 in output_items.keys().sorted() {
                                                 let v2 = output_items.get(k2).unwrap();
-                                                if (*k1 as i32 + offset) == (*k2 as i32) && *v1 != *v2
+                                                if (*k1 as i32 + offset) == (*k2 as i32)
+                                                    && *v1 != *v2
                                                 {
                                                     let trans_filename1 =
                                                         pp.join(format!("{}.rs.2", &k1));
@@ -383,11 +380,19 @@ fn main() {
                                                         pp.join(format!("{}.rs.3", &k1));
                                                     if let Ok(vv1) = std::str::from_utf8(v1) {
                                                         if let Ok(vv2) = std::str::from_utf8(v2) {
+                                                            let markedrules = String::from_utf8(markup_rules(*k1, *k1+vv1.len(), v.to_vec())).ok().unwrap();
+
                                                             let _ = &trans_filename1;
-                                                            std::fs::write(&trans_filename1, format!("{}{}", markedrules, vv1))
-                                                                .ok();
-                                                            std::fs::write(&trans_filename2, format!("{}{}", markedrules, vv2))
-                                                                .ok();
+                                                            std::fs::write(
+                                                                &trans_filename1,
+                                                                format!("{}{}", markedrules, vv1),
+                                                            )
+                                                            .ok();
+                                                            std::fs::write(
+                                                                &trans_filename2,
+                                                                format!("{}{}", markedrules, vv2),
+                                                            )
+                                                            .ok();
                                                             offset += (v2.len() as i32
                                                                 - v1.len() as i32)
                                                                 as i32;
