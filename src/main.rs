@@ -173,7 +173,7 @@ fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
     output
 }
 
-// list the rules as comments
+// list the relevant rules as comments
 fn markup_rules(start: usize, end: usize, map: Vec<Ran>) -> Vec<u8> {
     let mut output = Vec::new();
     for m in &map {
@@ -191,6 +191,7 @@ pub struct ExtractedNode<'query> {
     end_byte: usize,
 }
 
+// Split up the Rust source_file into individual items, indiced by their start_byte offsets
 fn splitup<'a>(
     parser: &mut Parser,
     ts_language: tree_sitter::Language,
@@ -205,14 +206,28 @@ fn splitup<'a>(
     let query = language::Language::Rust
         .parse_query(
             "([
-                (function_item) @fn
-                (type_item) @fn
-                (enum_item) @fn
-                (union_item) @fn
-                (struct_item) @fn
-                (impl_item) @fn
-                (trait_item) @fn 
-                (static_item) @fn 
+      (const_item) @fn
+      (macro_invocation) @fn
+      (macro_definition) @fn
+      (empty_statement) @fn
+      (attribute_item) @fn
+      (inner_attribute_item) @fn
+      (mod_item) @fn
+      (foreign_mod_item) @fn
+      (struct_item) @fn
+      (union_item) @fn
+      (enum_item) @fn
+      (type_item) @fn
+      (function_item) @fn
+      (function_signature_item) @fn
+      (impl_item) @fn
+      (trait_item) @fn
+      (associated_type) @fn
+      (let_declaration) @fn
+      (use_declaration) @fn
+      (extern_crate_declaration) @fn
+      (static_item) @fn
+      (_) @fn
             ])",
         )
         .unwrap();
@@ -265,14 +280,8 @@ fn restore_original(file_name: &String, content: &String) {
     std::fs::write(file_name, content).ok();
 }
 
-// Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
-fn main() {
-    remove_previously_generated_files("diagnostics", "*.rs"); // marked up
-    remove_previously_generated_files("original", "*.rs"); // before fix
-    remove_previously_generated_files(".", "*.rs.1"); // split up
-    remove_previously_generated_files(".", "*.rs.2"); // transformed from
-    remove_previously_generated_files(".", "*.rs.3"); // transformed to
-    let args = vec!["clippy", "--message-format=json"];
+fn to_diagnostic(args: Vec<&str>) -> HashMap<String, Vec<Ran>> {
+    let mut map: HashMap<String, Vec<Ran>> = HashMap::new();
     if let Ok(mut command) = Command::new("cargo")
         .args(args)
         .stdout(Stdio::piped())
@@ -312,96 +321,116 @@ fn main() {
                     }
                 }
             }
-            let mut origin_map: HashMap<String, String> = HashMap::new();
-            let mut markup_map: HashMap<String, String> = HashMap::new();
-            for file in map.keys() {
-                if let Ok(source) = read_to_string(file) {
-                    if let Some(v) = map.get(file) {
-                        let markedup = &markup(source.as_bytes(), v.to_vec());
-                        origin_map.insert(file.to_string(), source);
-                        if let Ok(s) = std::str::from_utf8(markedup) {
-                            markup_map.insert(file.to_string(), s.to_string());
-                        }
-                    }
+        }
+        command.wait().ok();
+    }
+    map
+}
+
+// Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
+fn main() {
+    remove_previously_generated_files("diagnostics", "*.rs"); // marked up
+    remove_previously_generated_files("original", "*.rs"); // before fix
+    remove_previously_generated_files(".", "*.rs.1"); // split up
+    remove_previously_generated_files(".", "*.rs.2"); // transformed from
+    remove_previously_generated_files(".", "*.rs.3"); // transformed to
+    let args = vec!["clippy", "--message-format=json"];
+    let mut map = to_diagnostic(args);
+    let mut origin_map: HashMap<String, String> = HashMap::new();
+    let mut markup_map: HashMap<String, String> = HashMap::new();
+    for file in map.keys() {
+        if let Ok(source) = read_to_string(file) {
+            if let Some(v) = map.get(file) {
+                origin_map.insert(file.to_string(), source);
+                let markedup = &markup(source.as_bytes(), v.to_vec());
+                if let Ok(s) = std::str::from_utf8(markedup) {
+                    markup_map.insert(file.to_string(), s.to_string());
                 }
             }
-            run_clippy_fix();
-            for file in map.keys() {
-                let input = &origin_map[file];
-                let markedup = &markup_map[file];
-                if let Ok(source) = read_to_string(file) {
-                    if let Some(v) = map.get(file) {
-                        let output = source.as_bytes();
-                        let file_name = PathBuf::from("diagnostics").join(file);
-                        let orig_name = PathBuf::from("original").join(file);
-                        let trans_name = PathBuf::from("transform").join(file);
-                        println!("Marked warning(s) into {:?}", &file_name);
-                        if let Some(p) = file_name.parent() {
-                            if !p.exists() {
-                                std::fs::create_dir_all(p).ok();
-                            }
-                        }
-                        if let Some(o) = orig_name.parent() {
-                            if !o.exists() {
-                                std::fs::create_dir_all(o).ok();
-                            }
-                        }
-                        if let Ok(content) = std::str::from_utf8(markedup.as_bytes()) {
-                            std::fs::write(&file_name, content).ok();
-                            std::fs::write(&orig_name, input).ok();
-                        }
-                        let mut parser = Parser::new();
-                        if let Ok(orig_items) = splitup(
-                            &mut parser,
-                            language::Language::Rust.language(),
-                            input.as_bytes(),
-                        ) {
-                            if let Ok(output_items) =
-                                splitup(&mut parser, language::Language::Rust.language(), output)
-                            {
-                                if let Some(t) = trans_name.parent() {
-                                    let path = PathBuf::from(&file);
-                                    if let Some(p) = path.file_stem() {
-                                        let pp = t.join(p);
-                                        if !pp.exists() {
-                                            std::fs::create_dir_all(&pp).ok();
-                                        }
-                                        let mut offset = 0_i32;
-                                        for k1 in orig_items.keys().sorted() {
-                                            let v1 = orig_items.get(k1).unwrap();
-                                            for k2 in output_items.keys().sorted() {
-                                                let v2 = output_items.get(k2).unwrap();
-                                                if (*k1 as i32 + offset) == (*k2 as i32)
-                                                    && *v1 != *v2
-                                                {
-                                                    let trans_filename1 =
-                                                        pp.join(format!("{}.rs.2", &k1));
-                                                    let trans_filename2 =
-                                                        pp.join(format!("{}.rs.3", &k1));
-                                                    if let Ok(vv1) = std::str::from_utf8(v1) {
-                                                        if let Ok(vv2) = std::str::from_utf8(v2) {
-                                                            let markedrules = String::from_utf8(markup_rules(*k1, *k1+vv1.len(), v.to_vec())).ok().unwrap();
+        }
+    }
+    run_clippy_fix();
+    for file in map.keys() {
+        let input = &origin_map[file];
+        let markedup = &markup_map[file];
+        if let Ok(source) = read_to_string(file) {
+            if let Some(v) = map.get(file) {
+                let output = source.as_bytes();
+                let fixedup = &markup(source.as_bytes(), v.to_vec());
+                if let Ok(s) = std::str::from_utf8(markedup) {
+                    markup_map.insert(file.to_string(), s.to_string());
+                }
 
-                                                            let _ = &trans_filename1;
-                                                            std::fs::write(
-                                                                &trans_filename1,
-                                                                format!("{}{}", markedrules, vv1),
-                                                            )
-                                                            .ok();
-                                                            std::fs::write(
-                                                                &trans_filename2,
-                                                                format!("{}{}", markedrules, vv2),
-                                                            )
-                                                            .ok();
-                                                            offset += (v2.len() as i32
-                                                                - v1.len() as i32)
-                                                                as i32;
-                                                            dbg!(offset);
-                                                        }
-                                                    }
-                                                    break;
+                let file_name = PathBuf::from("diagnostics").join(file);
+                let orig_name = PathBuf::from("original").join(file);
+                let trans_name = PathBuf::from("transform").join(file);
+                println!("Marked warning(s) into {:?}", &file_name);
+                if let Some(p) = file_name.parent() {
+                    if !p.exists() {
+                        std::fs::create_dir_all(p).ok();
+                    }
+                }
+                if let Some(o) = orig_name.parent() {
+                    if !o.exists() {
+                        std::fs::create_dir_all(o).ok();
+                    }
+                }
+                if let Ok(content) = std::str::from_utf8(markedup.as_bytes()) {
+                    std::fs::write(&file_name, content).ok();
+                    std::fs::write(&orig_name, input).ok();
+                }
+                let mut parser = Parser::new();
+                if let Ok(orig_items) = splitup(
+                    &mut parser,
+                    language::Language::Rust.language(),
+                    input.as_bytes(),
+                ) {
+                    if let Ok(output_items) =
+                        splitup(&mut parser, language::Language::Rust.language(), output)
+                    {
+                        if let Some(t) = trans_name.parent() {
+                            let path = PathBuf::from(&file);
+                            if let Some(p) = path.file_stem() {
+                                let pp = t.join(p);
+                                if !pp.exists() {
+                                    std::fs::create_dir_all(&pp).ok();
+                                }
+                                let mut offset = 0_i32;
+                                for k1 in orig_items.keys().sorted() {
+                                    let v1 = orig_items.get(k1).unwrap();
+                                    for k2 in output_items.keys().sorted() {
+                                        let v2 = output_items.get(k2).unwrap();
+                                        if (*k1 as i32 + offset) == (*k2 as i32) && *v1 != *v2 {
+                                            let trans_filename1 = pp.join(format!("{}.rs.2", &k1));
+                                            let trans_filename2 = pp.join(format!("{}.rs.3", &k1));
+                                            if let Ok(vv1) = std::str::from_utf8(v1) {
+                                                if let Ok(vv2) = std::str::from_utf8(v2) {
+                                                    let markedrules =
+                                                        String::from_utf8(markup_rules(
+                                                            *k1,
+                                                            *k1 + vv1.len(),
+                                                            v.to_vec(),
+                                                        ))
+                                                        .ok()
+                                                        .unwrap();
+
+                                                    let _ = &trans_filename1;
+                                                    std::fs::write(
+                                                        &trans_filename1,
+                                                        format!("{}{}", markedrules, vv1),
+                                                    )
+                                                    .ok();
+                                                    std::fs::write(
+                                                        &trans_filename2,
+                                                        format!("{}{}", markedrules, vv2),
+                                                    )
+                                                    .ok();
+                                                    offset +=
+                                                        (v2.len() as i32 - v1.len() as i32) as i32;
+                                                    dbg!(offset);
                                                 }
                                             }
+                                            break;
                                         }
                                     }
                                 }
@@ -409,10 +438,9 @@ fn main() {
                         }
                     }
                 }
-                restore_original(file, input);
             }
-            command.wait().ok();
         }
+        restore_original(file, input);
     }
 }
 

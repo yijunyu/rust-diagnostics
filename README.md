@@ -46,7 +46,7 @@ contains a `Warning` as the diagnostic code, and `clippy::dbg_macro` as the name
 - [x] Store the transformation results before and after `clippy --fix` into the `transform` folder 
 - [x] list the marked rules applied to the transformations
 - [x] Select only the relevant marked rules
-- [ ] Narrow scope of matching patterns for the fixes
+- [ ] Select only the fixed warnings
 
 ## Acknowledgement
 
