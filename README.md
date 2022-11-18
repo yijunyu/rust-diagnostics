@@ -32,7 +32,8 @@ cargo install rust-diagnostics
 rust-diagnostics
 ```
 
-### Inserting warnings info into code
+### Inserting warnings info into Rust code
+
 The [commented
 code](https://github.com/yijunyu/rust-diagnostics/blob/main/diagnostics/src/main.rs)
 is generated from the [Rust
@@ -52,10 +53,11 @@ ensure to avoid having uses of it in version control*/;
 ```
 contains a `Warning` as the diagnostic code, and `clippy::dbg_macro` as the name of the lint rule violated by the code `dbg!(&msg)`. 
 
-### Generating inputs and expected outputs for transformations that are fixed by some Clippy rules
-The code snippets before the warning are listed as `*.2.rs`,
-and [after](https://github.com/yijunyu/rust-diagnostics/blob/main/transform/src/main/4200.3.rs)
-are generated from the [Rust code](https://github.com/yijunyu/rust-diagnostics/blob/main/src/main.rs).
+### Generating inputs and outputs of warning fixes by `cargo clippy --fix`
+
+The code snippets before fix are listed as `*.2.rs`, and after fix are listed
+as `*.3.rs` under the `transform/foo/` folder, where `foo.rs` is the Rust code
+that contains the fixed warnings.
 
 ## Update
 
