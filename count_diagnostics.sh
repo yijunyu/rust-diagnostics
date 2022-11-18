@@ -11,12 +11,10 @@ function count_diagnostics() {
 	cat w.txt | sort | uniq -c | sort -n
 	d=$(cat w.txt | sort | uniq -c | sort -n | awk '{s=s+$1}END{print s}')
 	echo "Number of warnings = $d"
-        a=$(tokei -t=Rust | grep " Total" | awk '{print $3}')
-        b=$(tokei -t=Rust diagnostics | grep " Total" | awk '{print $3}')
-	c=$(( a - b ))
-        echo "Lines of Rust code: $a - $b  = $c"
-	f=$(( d * 1000 / c ))
-	echo "Number of warnings per KLOC: $d * 1000 / $c = $f"
+        a=$(tokei -t=Rust src | grep " Total" | awk '{print $3}')
+        echo "Lines of Rust code: $a"
+	f=$(( d * 1000 / a ))
+	echo "Number of warnings per KLOC: $d * 1000 / $a = $f"
 }
 export -f count_diagnostics
 count_diagnostics

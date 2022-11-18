@@ -64,6 +64,7 @@ use std::{
     fs::read_to_string,
     path::PathBuf,
     process::{Command, Stdio},
+    num::Wrapping,
 };
 use tree_sitter::{Parser, QueryCursor};
 
@@ -136,7 +137,7 @@ struct Ran {
 }
 
 // insert diagnostic code as an markup element around the code causing the diagnostic message
-fn markup(source: &[u8], map: Vec<Box<Ran>>) -> Vec<u8> {
+fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
     let mut output = Vec::new();
     for (i, c) in source.iter().enumerate() {
         for m in &map {
@@ -173,10 +174,10 @@ fn markup(source: &[u8], map: Vec<Box<Ran>>) -> Vec<u8> {
 }
 
 // list the relevant rules as comments
-fn markup_rules(start: usize, end: usize, map: Vec<Box<Ran>>) -> Vec<u8> {
+fn markup_rules(start: Wrapping<usize>, end: Wrapping<usize>, map: Vec<Ran>) -> Vec<u8> {
     let mut output = Vec::new();
     for m in &map {
-        if start <= m.start && m.end <= end {
+        if start <= Wrapping(m.start) && Wrapping(m.end) <= end {
             output.extend(format!("/*{}*/\n", m.name).as_bytes());
         }
     }
@@ -202,9 +203,9 @@ fn splitup<'a>(
     let tree = parser
         .parse(source, None)
         .context("could not parse to a tree. This is an internal error and should be reported.")?;
-    let query = language::Language::Rust
-        .parse_query(
-            "([
+    let mut output: HashMap<usize, &[u8]> = HashMap::new();
+    if let Ok(query) = language::Language::Rust.parse_query(
+        "([
       (const_item) @fn
       (macro_invocation) @fn
       (macro_definition) @fn
@@ -227,28 +228,36 @@ fn splitup<'a>(
       (extern_crate_declaration) @fn
       (static_item) @fn
             ])",
-        )
-        .unwrap();
-    let captures = query.capture_names().to_vec();
-    let mut cursor = QueryCursor::new();
-    let extracted = cursor
-        .matches(&query, tree.root_node(), source)
-        .flat_map(|query_match| query_match.captures)
-        .map(|capture| {
-            let name = &captures[capture.index as usize];
-            let node = capture.node;
-            Ok(ExtractedNode {
-                name,
-                start_byte: node.start_byte(),
-                end_byte: node.end_byte(),
+    ) {
+        let captures = query.capture_names().to_vec();
+        let mut cursor = QueryCursor::new();
+        let extracted = cursor
+            .matches(&query, tree.root_node(), source)
+            .flat_map(|query_match| query_match.captures)
+            .map(|capture| {
+                if let Ok(idx) = usize::try_from(capture.index) {
+                    let name = &captures[idx];
+                    let node = capture.node;
+                    Ok(ExtractedNode {
+                        name,
+                        start_byte: node.start_byte(),
+                        end_byte: node.end_byte(),
+                    })
+                } else {
+                    Ok(ExtractedNode {
+                        name: "",
+                        start_byte: 0,
+                        end_byte: 0
+                    })
+                }
             })
-        })
-        .collect::<Result<Vec<ExtractedNode>>>()?;
-    let mut output: HashMap<usize, &[u8]> = HashMap::new();
-    for m in extracted {
-        if m.name == "fn" {
-            let code = std::str::from_utf8(&source[m.start_byte..m.end_byte]).unwrap();
-            output.insert(m.start_byte, code.as_bytes());
+            .collect::<Result<Vec<ExtractedNode>>>()?;
+        for m in extracted {
+            if m.name == "fn" {
+                if let Ok(code) = std::str::from_utf8(&source[m.start_byte..m.end_byte]) {
+                    output.insert(m.start_byte, code.as_bytes());
+                }
+            }
         }
     }
     Ok(output)
@@ -259,7 +268,7 @@ fn restore_original(file_name: &String, content: &String) {
     std::fs::write(file_name, content).ok();
 }
 
-fn to_diagnostic(map: &mut HashMap<String, Vec<Box<Ran>>>, args: Vec<&str>) {
+fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<&str>) {
     if let Ok(mut command) = Command::new("cargo")
         .args(args)
         .stdout(Stdio::piped())
@@ -273,7 +282,7 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Box<Ran>>>, args: Vec<&str>) {
                         if let Ok(x) = usize::try_from(s.byte_start) {
                             if let Ok(y) = usize::try_from(s.byte_end) {
                                 if let Some(message_code) = &msg.message.code {
-                                    let r = Box::new(Ran {
+                                    let r = Ran {
                                         name: format!(
                                             "#[{:?}({})",
                                             msg.message.level,
@@ -283,7 +292,7 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Box<Ran>>>, args: Vec<&str>) {
                                         end: y,
                                         suggestion: format!("{:?}", s.suggested_replacement),
                                         note: format!("{:?}", sub_messages(&msg.message.children)),
-                                    });
+                                    };
                                     let filename = s.file_name;
                                     match map.get_mut(&filename) {
                                         Some(v) => v.push(r),
@@ -303,9 +312,6 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Box<Ran>>>, args: Vec<&str>) {
     }
 }
 
-use std::env;
-use std::path::Path;
-
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
     // env::set_current_dir(Path::new("test")).ok();
@@ -315,7 +321,7 @@ fn main() {
     remove_previously_generated_files(".", "*.2.rs"); // transformed from
     remove_previously_generated_files(".", "*.3.rs"); // transformed to
     let args = vec!["clippy", "--message-format=json"];
-    let mut map: HashMap<String, Vec<Box<Ran>>> = HashMap::new();
+    let mut map: HashMap<String, Vec<Ran>> = HashMap::new();
     to_diagnostic(&mut map, args);
     let mut origin_map: HashMap<String, String> = HashMap::new();
     let mut markup_map: HashMap<String, String> = HashMap::new();
@@ -337,7 +343,7 @@ fn main() {
         "--allow-dirty",
         "--broken-code",
     ];
-    let mut fixed_map: HashMap<String, Vec<Box<Ran>>> = HashMap::new();
+    let mut fixed_map: HashMap<String, Vec<Ran>> = HashMap::new();
     to_diagnostic(&mut fixed_map, args);
     for file in map.keys() {
         let markedup = &markup_map[file];
@@ -361,7 +367,15 @@ fn main() {
                             fixed_warnings.push(w.clone());
                         }
                     }
-                    to_fix(file, warnings.to_vec(), fixed_warnings, remaining_warnings, input, markedup.as_bytes(), output);
+                    to_fix(
+                        file,
+                        warnings.to_vec(),
+                        fixed_warnings,
+                        remaining_warnings,
+                        input,
+                        markedup.as_bytes(),
+                        output,
+                    );
                 }
             }
         }
@@ -372,7 +386,16 @@ fn main() {
     }
 }
 
-fn to_fix(file: &String, warnings: Vec<Box<Ran>>, fixed_warnings: Vec<Box<Ran>>, remaining_warnings: Vec<Box<Ran>>, input: &String, markedup: &[u8], output: &[u8]) {
+
+fn to_fix(
+    file: &String,
+    warnings: Vec<Ran>,
+    fixed_warnings: Vec<Ran>,
+    remaining_warnings: Vec<Ran>,
+    input: &String,
+    markedup: &[u8],
+    output: &[u8],
+) {
     let file_name = PathBuf::from("diagnostics").join(file);
     let trans_name = PathBuf::from("transform").join(file);
     println!("Marked warning(s) into {:?}", &file_name);
@@ -384,16 +407,19 @@ fn to_fix(file: &String, warnings: Vec<Box<Ran>>, fixed_warnings: Vec<Box<Ran>>,
     if let Ok(content) = std::str::from_utf8(markedup) {
         std::fs::write(&file_name, content).ok();
     }
-    let input_markedup = &markup(input.as_bytes(), warnings.clone());
-    let output_markedup = &markup(output, remaining_warnings.clone());
+    let input_markedup = &markup(input.as_bytes(), warnings);
+    let output_markedup = &markup(output, remaining_warnings);
     let mut parser = Parser::new();
     if let Ok(orig_items) = splitup(
         &mut parser,
         language::Language::Rust.language(),
         input_markedup,
     ) {
-        if let Ok(output_items) = splitup(&mut parser, language::Language::Rust.language(), output_markedup)
-        {
+        if let Ok(output_items) = splitup(
+            &mut parser,
+            language::Language::Rust.language(),
+            output_markedup,
+        ) {
             if let Some(t) = trans_name.parent() {
                 let path = PathBuf::from(&file);
                 if let Some(p) = path.file_stem() {
@@ -401,38 +427,41 @@ fn to_fix(file: &String, warnings: Vec<Box<Ran>>, fixed_warnings: Vec<Box<Ran>>,
                     if !pp.exists() {
                         std::fs::create_dir_all(&pp).ok();
                     }
-                    let mut offset = 0_i32;
+                    let mut offset = Wrapping(0);
                     for k1 in orig_items.keys().sorted() {
-                        let v1 = orig_items.get(k1).unwrap();
-                        for k2 in output_items.keys().sorted() {
-                            let v2 = output_items.get(k2).unwrap();
-                            if (*k1 as i32 + offset) == (*k2 as i32) && *v1 != *v2 {
-                                let trans_filename1 = pp.join(format!("{}.2.rs", &k1));
-                                let trans_filename2 = pp.join(format!("{}.3.rs", &k1));
-                                if let Ok(vv1) = std::str::from_utf8(v1) {
-                                    if let Ok(vv2) = std::str::from_utf8(v2) {
-                                        let markedrules = String::from_utf8(markup_rules(
-                                            *k1,
-                                            *k1 + vv1.len(),
-                                            fixed_warnings.to_vec(),
-                                        ))
-                                        .ok()
-                                        .unwrap();
-                                        let _ = &trans_filename1;
-                                        std::fs::write(
-                                            &trans_filename1,
-                                            format!("{}{}", markedrules, vv1),
-                                        )
-                                        .ok();
-                                        std::fs::write(
-                                            &trans_filename2,
-                                            format!("{}{}", markedrules, vv2),
-                                        )
-                                        .ok();
-                                        offset += (v2.len() as i32 - v1.len() as i32) as i32;
+                        if let Some(v1) = orig_items.get(k1) {
+                            for k2 in output_items.keys().sorted() {
+                                if let Some(v2) = output_items.get(k2) {
+                                    if (Wrapping(*k1) + offset) == Wrapping(*k2) && *v1 != *v2 {
+                                        let trans_filename1 = pp.join(format!("{}.2.rs", &k1));
+                                        let trans_filename2 = pp.join(format!("{}.3.rs", &k1));
+                                        if let Ok(vv1) = std::str::from_utf8(v1) {
+                                            if let Ok(vv2) = std::str::from_utf8(v2) {
+                                                if let Ok(markedrules) =
+                                                    String::from_utf8(markup_rules(
+                                                        Wrapping(*k1),
+                                                        Wrapping(*k1) + Wrapping(vv1.len()),
+                                                        fixed_warnings.to_vec(),
+                                                    ))
+                                                {
+                                                    let _ = &trans_filename1;
+                                                    std::fs::write(
+                                                        &trans_filename1,
+                                                        format!("{}{}", markedrules, vv1),
+                                                    )
+                                                    .ok();
+                                                    std::fs::write(
+                                                        &trans_filename2,
+                                                        format!("{}{}", markedrules, vv2),
+                                                    )
+                                                    .ok();
+                                                    offset += Wrapping(v2.len()) - Wrapping(v1.len());
+                                                }
+                                            }
+                                        }
+                                        break;
                                     }
                                 }
-                                break;
                             }
                         }
                     }
