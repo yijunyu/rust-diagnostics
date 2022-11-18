@@ -53,7 +53,7 @@ ensure to avoid having uses of it in version control*/;
 contains a `Warning` as the diagnostic code, and `clippy::dbg_macro` as the name of the lint rule violated by the code `dbg!(&msg)`. 
 
 ### Generating inputs and expected outputs for transformations that are fixed by some Clippy rules
-The code snippets [before](https://github.com/yijunyu/rust-diagnostics/blob/main/transform/src/main/4200.2.rs)
+The code snippets before the warning are listed as `*.2.rs`,
 and [after](https://github.com/yijunyu/rust-diagnostics/blob/main/transform/src/main/4200.3.rs)
 are generated from the [Rust code](https://github.com/yijunyu/rust-diagnostics/blob/main/src/main.rs).
 
@@ -62,7 +62,6 @@ are generated from the [Rust code](https://github.com/yijunyu/rust-diagnostics/b
 - [x] Insert two comments around the diagnositic spans;
 - [x] Name the comments by the lint rules, and insert the rendered diagnostics in the second comment
 - [x] Insert rendered diagnostic messages in the second comment.
-- [x] Add an option `--fix` to do risky fix whenever possible. 
 - [x] Separate the output files into a different folder, but keep using the same ".rs" file extension
 - [x] Measure the number of warnings per KLOC through `count_diagnostics.sh`
 - [x] Store the transformation results before and after `clippy --fix` into the `transform` folder 

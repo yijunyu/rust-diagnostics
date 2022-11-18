@@ -383,6 +383,9 @@ fn main() {
     for file in map.keys() {
         let input = &origin_map[file];
         restore_original(file, input);
+        if let Ok(output) = txl(file) {
+            println!("{}", output);
+        }
     }
 }
 
@@ -512,5 +515,33 @@ fn remove_previously_generated_files(folder: &str, pattern: &str) {
                 });
             }
         }
+    }
+}
+
+fn txl(input: &String) -> Result<String, std::io::Error> {
+    if let Ok(command) = Command::new("txl")
+        .args(["-q", "-s", "3000", input,])
+        .stdout(Stdio::piped())
+        .spawn()
+    {
+        if let Ok(output) = command.wait_with_output() {
+            if !output.stdout.is_empty() {
+                match String::from_utf8(output.stdout).ok() {
+                    Some(s) => {
+                        Ok(s)
+                    },
+                    None => {
+                        Err(std::io::Error::new(std::io::ErrorKind::Other, "output is not UTF8"))
+                    }
+                }
+            } else {
+                    Err(std::io::Error::new(std::io::ErrorKind::Other, "output is empty"))
+            }
+        } else {
+            println!("Cannot run txl {}", input);
+            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Cannot run `txl {}`", input)))
+        }
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "Command `txl` not found"))
     }
 }
