@@ -17,7 +17,7 @@ tree-sitter = "0.20.9"
 anyhow = "1.0.52"
 serde = { version = "1.0.133", features = [ "derive" ] }
 itertools = "*"
-txl-rs = "0.0.2"
+txl-rs = "*"
 
 [build-dependencies]
 cc = { version = "1.0.72", features = [ "parallel" ] }
