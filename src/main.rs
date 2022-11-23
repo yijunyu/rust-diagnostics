@@ -1,5 +1,5 @@
 mod language;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cargo_metadata::{diagnostic::Diagnostic, Message};
 use itertools::Itertools;
 use serde::Serialize;
@@ -10,7 +10,8 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
 };
-use tree_sitter::{Parser, QueryCursor};
+use tree_sitter::QueryCursor;
+use tree_sitter_parsers::parse;
 
 use cargo::util::command_prelude::{ArgMatchesExt, Config};
 use cargo::{
@@ -144,16 +145,10 @@ pub struct ExtractedNode<'query> {
 
 // Split up the Rust source_file into individual items, indiced by their start_byte offsets
 fn splitup<'a>(
-    parser: &mut Parser,
-    ts_language: tree_sitter::Language,
     source: &'a [u8],
 ) -> Result<HashMap<usize, &'a [u8]>> {
-    parser
-        .set_language(ts_language)
-        .context("could not set language")?;
-    let tree = parser
-        .parse(source, None)
-        .context("could not parse to a tree. This is an internal error and should be reported.")?;
+    let s = std::str::from_utf8(source).ok().unwrap();
+    let tree = parse(s, "rust");
     let mut output: HashMap<usize, &[u8]> = HashMap::new();
     if let Ok(query) = language::Language::Rust.parse_query(
         "([
@@ -560,15 +555,10 @@ fn to_fix(
         .join(file);
     let input_markedup = &markup(input.as_bytes(), warnings);
     let output_markedup = &markup(output, remaining_warnings);
-    let mut parser = Parser::new();
     if let Ok(orig_items) = splitup(
-        &mut parser,
-        language::Language::Rust.language(),
         input_markedup,
     ) {
         if let Ok(output_items) = splitup(
-            &mut parser,
-            language::Language::Rust.language(),
             output_markedup,
         ) {
             if let Some(t) = trans_name.parent() {

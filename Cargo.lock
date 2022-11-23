@@ -1325,9 +1325,9 @@ dependencies = [
  "cc",
  "clap",
  "itertools",
- "rustflags",
  "serde",
  "tree-sitter",
+ "tree-sitter-parsers",
  "txl-rs",
 ]
 
@@ -1348,12 +1348,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "rustflags"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27b7b4b81839a593edf095ca5170f67cd065009d7cc828e25de85dab6cd0027f"
 
 [[package]]
 name = "ryu"
@@ -1758,6 +1752,16 @@ checksum = "d4423c784fe11398ca91e505cdc71356b07b1a924fc8735cfab5333afe3e18bc"
 dependencies = [
  "cc",
  "regex",
+]
+
+[[package]]
+name = "tree-sitter-parsers"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c15d2f5d9d5e4a7579210e5b57d1e125c7c89325ebe35729b03a28656a705c4"
+dependencies = [
+ "cc",
+ "tree-sitter",
 ]
 
 [[package]]
