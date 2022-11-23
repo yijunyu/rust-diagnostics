@@ -12,15 +12,14 @@ keywords = ["clippy", "diagnostics"]
 license = "Apache-2.0"
 
 [dependencies]
-cargo = "*"
+cargo = "0.66.0"
 cargo_metadata = "0.15.1"
 tree-sitter = "0.20.9"
 anyhow = "1.0.52"
 serde = { version = "1.0.133", features = [ "derive" ] }
-itertools = "*"
-txl-rs = "*"
-rustflags = "*"
-clap = "*"
+itertools = "0.10.5"
+txl-rs = "0.0.3"
+clap = "3.2.23"
 
 [build-dependencies]
 cc = { version = "1.0.72", features = [ "parallel" ] }
