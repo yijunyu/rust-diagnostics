@@ -1,59 +1,3 @@
-#![warn(
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::await_holding_lock,
-    clippy::await_holding_refcell_ref,
-    clippy::large_stack_arrays,
-    clippy::match_bool,
-    clippy::needless_bitwise_bool,
-    clippy::empty_enum,
-    clippy::enum_glob_use,
-    clippy::exhaustive_enums,
-    clippy::cast_precision_loss,
-    clippy::float_arithmetic,
-    clippy::float_cmp,
-    clippy::float_cmp_const,
-    clippy::imprecise_flops,
-    clippy::suboptimal_flops,
-    clippy::as_conversions,
-    clippy::cast_lossless,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
-    clippy::ptr_as_ptr,
-    clippy::default_numeric_fallback,
-    clippy::checked_conversions,
-    clippy::integer_arithmetic,
-    clippy::cast_sign_loss,
-    clippy::modulo_arithmetic,
-    clippy::exhaustive_structs,
-    clippy::struct_excessive_bools,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::large_types_passed_by_value,
-    clippy::fn_params_excessive_bools,
-    clippy::trivially_copy_pass_by_ref,
-    clippy::inline_always,
-    clippy::inefficient_to_string,
-    clippy::dbg_macro,
-    clippy::wildcard_imports,
-    clippy::self_named_module_files,
-    clippy::mod_module_files,
-    clippy::disallowed_methods,
-    clippy::disallowed_script_idents,
-    clippy::disallowed_types
-)]
-#![allow(
-    clippy::empty_enum,
-    clippy::enum_clike_unportable_variant,
-    clippy::assertions_on_constants,
-    clippy::enum_glob_use,
-    clippy::expect_fun_call
-)]
-#![deny(
-    text_direction_codepoint_in_comment,
-    text_direction_codepoint_in_literal
-)]
 mod language;
 use anyhow::{Context, Result};
 use cargo_metadata::{diagnostic::Diagnostic, Message};
@@ -62,12 +6,18 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     fs::read_to_string,
+    num::Wrapping,
     path::PathBuf,
     process::{Command, Stdio},
-    num::Wrapping,
 };
 use tree_sitter::{Parser, QueryCursor};
-use txl_rs::txl;
+
+use cargo::util::command_prelude::{ArgMatchesExt, Config};
+use cargo::{
+    core::compiler::{CompileKind, RustcTargetData},
+    util::command_prelude::{CompileMode, ProfileChecking},
+};
+use clap::Arg;
 
 /**
  * You can skip the above compiler flags to inserting the following options into `$HOME/.cargo/config`
@@ -248,7 +198,7 @@ fn splitup<'a>(
                     Ok(ExtractedNode {
                         name: "",
                         start_byte: 0,
-                        end_byte: 0
+                        end_byte: 0,
                     })
                 }
             })
@@ -313,105 +263,301 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<&str>) {
     }
 }
 
+// Find all the RUSTC_FLAGS enabled by `cargo`
+// Adapted from https://github.com/rust-lang/cargo/blob/master/src/bin/cargo/commands/build.rs
+fn _rustflags() -> Vec<String> {
+    let args = clap::Command::new("rust-diagnostics")
+        .arg(Arg::new("cfg").short('c').takes_value(true))
+        .get_matches(); // builds the instance of ArgMatches
+    let config = Option::unwrap(Config::default().ok());
+    let ws = Option::unwrap(Result::ok(args.workspace(&config)));
+    let compile_opts = Option::unwrap(Result::ok(args.compile_options(
+        &config,
+        CompileMode::Build,
+        Some(&ws),
+        ProfileChecking::Custom,
+    )));
+    // if compile_opts.build_config.export_dir.is_some() { config.cli_unstable(); }
+    let target_data = Option::unwrap(Result::ok(RustcTargetData::new(
+        &ws,
+        &compile_opts.build_config.requested_kinds,
+    )));
+    let target_info = target_data.info(CompileKind::Host);
+    target_info.rustflags.clone()
+}
+
+// markup all warnings into diagnostics
+fn diagnose_all_warnings(allow_flags: Vec<&str>, flags: Vec<&str>) -> HashMap<String, Vec<Ran>> {
+    let mut args = vec!["clippy", "--message-format=json", "--"];
+    args.append(&mut allow_flags.clone());
+    args.append(&mut flags.clone());
+    let mut map: HashMap<String, Vec<Ran>> = HashMap::new();
+    to_diagnostic(&mut map, args);
+    if !map.is_empty() {
+        let mut markup_map: HashMap<String, String> = HashMap::new();
+        for file in map.keys() {
+            if let Ok(source) = read_to_string(file) {
+                if let Some(v) = map.get(file) {
+                    let markedup = &markup(source.as_bytes(), v.to_vec());
+                    if let Ok(s) = std::str::from_utf8(markedup) {
+                        markup_map.insert(file.to_string(), s.to_string());
+                    }
+                }
+            }
+        }
+        for file in map.keys() {
+            let markedup = &markup_map[file];
+            let file_name = PathBuf::from("diagnostics").join(file);
+            println!("Marked warning(s) into {:?}", &file_name);
+            if let Some(p) = file_name.parent() {
+                if !p.exists() {
+                    std::fs::create_dir_all(p).ok();
+                }
+            }
+            std::fs::write(&file_name, markedup).ok();
+        }
+    }
+    map
+}
+
+// process warnings from one RUSTC_FLAG at a time
+fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec<Ran>>) {
+    println!("{:?}", flag);
+    let mut flagged_map: HashMap<String, Vec<Ran>> = HashMap::new();
+    for file in map.keys() {
+        if let Some(v) = map.get(file) {
+            let mut new_v = Vec::new();
+            for r in v {
+                let rule = &flag[2..];
+                if r.name == format!("#[Warning({})", &rule) {
+                    let r1 = Ran {
+                        name: r.name.clone(),
+                        start: r.start,
+                        end: r.end,
+                        suggestion: r.suggestion.clone(),
+                        note: r.note.clone(),
+                    };
+                    new_v.push(r1);
+                }
+            }
+            if !new_v.is_empty() {
+                flagged_map.insert(file.to_string(), new_v);
+            }
+        }
+    }
+    if !flagged_map.is_empty() {
+        let mut origin_map: HashMap<String, String> = HashMap::new();
+        let mut markup_map: HashMap<String, String> = HashMap::new();
+        for file in flagged_map.keys() {
+            if let Ok(source) = read_to_string(file) {
+                if let Some(v) = flagged_map.get(file) {
+                    let markedup = &markup(source.as_bytes(), v.to_vec());
+                    origin_map.insert(file.to_string(), source);
+                    if let Ok(s) = std::str::from_utf8(markedup) {
+                        markup_map.insert(file.to_string(), s.to_string());
+                    }
+                }
+            }
+        }
+        let mut args = vec![
+            "clippy",
+            "--message-format=json",
+            "--fix",
+            "--allow-dirty",
+            "--broken-code",
+            "--",
+        ];
+        args.append(&mut allow_flags.clone());
+        args.append(&mut vec![flag.as_str()]);
+        let mut fixed_map: HashMap<String, Vec<Ran>> = HashMap::new();
+        to_diagnostic(&mut fixed_map, args);
+        for file in flagged_map.keys() {
+            if let Ok(source) = read_to_string(file) {
+                let input = &origin_map[file];
+                let output = source.as_bytes();
+                if let Some(warnings) = flagged_map.get(file) {
+                    if let Some(fixes) = fixed_map.get(file) {
+                        let mut fixed_warnings = Vec::new();
+                        let mut remaining_warnings = Vec::new();
+                        for w in warnings {
+                            let mut found = false;
+                            for f in fixes {
+                                if w.name == f.name {
+                                    found = true;
+                                    remaining_warnings.push(f.clone());
+                                    break;
+                                }
+                            }
+                            if !found {
+                                fixed_warnings.push(w.clone());
+                            }
+                        }
+                        to_fix(
+                            &flag,
+                            file,
+                            warnings.to_vec(),
+                            fixed_warnings,
+                            remaining_warnings,
+                            input,
+                            output,
+                        );
+                    }
+                }
+            }
+        }
+        for file in flagged_map.keys() {
+            let input = &origin_map[file];
+            restore_original(file, input);
+        }
+    }
+}
+
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
     // env::set_current_dir(Path::new("test")).ok();
     remove_previously_generated_files("./diagnostics", "*.rs"); // marked up
     remove_previously_generated_files("./original", "*.rs"); // before fix
-    remove_previously_generated_files(".", "*.1.rs"); // split up
     remove_previously_generated_files(".", "*.2.rs"); // transformed from
     remove_previously_generated_files(".", "*.3.rs"); // transformed to
-    let args = vec!["clippy", "--message-format=json"];
-    let mut map: HashMap<String, Vec<Ran>> = HashMap::new();
-    to_diagnostic(&mut map, args);
-    let mut origin_map: HashMap<String, String> = HashMap::new();
-    let mut markup_map: HashMap<String, String> = HashMap::new();
-    for file in map.keys() {
-        if let Ok(source) = read_to_string(file) {
-            if let Some(v) = map.get(file) {
-                let markedup = &markup(source.as_bytes(), v.to_vec());
-                origin_map.insert(file.to_string(), source);
-                if let Ok(s) = std::str::from_utf8(markedup) {
-                    markup_map.insert(file.to_string(), s.to_string());
-                }
-            }
-        }
-    }
-    let args = vec![
-        "clippy",
-        "--message-format=json",
-        "--fix",
-        "--allow-dirty",
-        "--broken-code",
+    let rust_allow_flags = vec![
+        "-Adead_code",
+        "-Anon_snake_case",
+        "-Aclippy::ptr_arg",
+        "-Aclippy::too_many_arguments",
+        "-Aclippy::missing_errors_doc",
+        "-Aclippy::missing_panics_doc",
+        "-Aclippy::await_holding_lock",
+        "-Aclippy::await_holding_refcell_ref",
+        "-Aclippy::assertions_on_constants",
+        "-Aclippy::large_stack_arrays",
+        "-Aclippy::match_bool",
+        "-Aclippy::needless_bitwise_bool",
+        "-Aclippy::empty_enum",
+        "-Aclippy::empty_enum",
+        "-Aclippy::enum_clike_unportable_variant",
+        "-Aclippy::enum_glob_use",
+        "-Aclippy::enum_glob_use",
+        "-Aclippy::exhaustive_enums",
+        "-Aclippy::cast_precision_loss",
+        "-Aclippy::float_arithmetic",
+        "-Aclippy::float_cmp",
+        "-Aclippy::float_cmp_const",
+        "-Aclippy::imprecise_flops",
+        "-Aclippy::suboptimal_flops",
+        "-Aclippy::as_conversions",
+        "-Aclippy::cast_lossless",
+        "-Aclippy::cast_possible_truncation",
+        "-Aclippy::cast_possible_wrap",
+        "-Aclippy::cast_precision_loss",
+        "-Aclippy::ptr_as_ptr",
+        "-Aclippy::default_numeric_fallback",
+        "-Aclippy::checked_conversions",
+        "-Aclippy::integer_arithmetic",
+        "-Aclippy::cast_sign_loss",
+        "-Aclippy::modulo_arithmetic",
+        "-Aclippy::exhaustive_structs",
+        "-Aclippy::struct_excessive_bools",
+        "-Aclippy::unwrap_used",
+        "-Aclippy::expect_used",
+        "-Aclippy::expect_fun_call",
+        "-Aclippy::large_types_passed_by_value",
+        "-Aclippy::fn_params_excessive_bools",
+        "-Aclippy::trivially_copy_pass_by_ref",
+        "-Aclippy::inline_always",
+        "-Aclippy::inefficient_to_string",
+        "-Aclippy::dbg_macro",
+        "-Aclippy::wildcard_imports",
+        "-Aclippy::self_named_module_files",
+        "-Aclippy::mod_module_files",
+        "-Aclippy::disallowed_methods",
+        "-Aclippy::disallowed_script_idents",
+        "-Aclippy::disallowed_types",
+        "-Atext_direction_codepoint_in_comment",
+        "-Atext_direction_codepoint_in_literal",
     ];
-    let mut fixed_map: HashMap<String, Vec<Ran>> = HashMap::new();
-    to_diagnostic(&mut fixed_map, args);
-    for file in map.keys() {
-        let markedup = &markup_map[file];
-        if let Ok(source) = read_to_string(file) {
-            let input = &origin_map[file];
-            let output = source.as_bytes();
-            if let Some(warnings) = map.get(file) {
-                if let Some(fixes) = fixed_map.get(file) {
-                    let mut fixed_warnings = Vec::new();
-                    let mut remaining_warnings = Vec::new();
-                    for w in warnings {
-                        let mut found = false;
-                        for f in fixes {
-                            if w.name == f.name {
-                                found = true;
-                                remaining_warnings.push(f.clone());
-                                break;
-                            }
-                        }
-                        if !found {
-                            fixed_warnings.push(w.clone());
-                        }
-                    }
-                    to_fix(
-                        file,
-                        warnings.to_vec(),
-                        fixed_warnings,
-                        remaining_warnings,
-                        input,
-                        markedup.as_bytes(),
-                        output,
-                    );
-                }
-            }
+
+    let rust_flags: std::vec::Vec<&str> = vec![
+        "-Wclippy::missing_errors_doc",
+        "-Wclippy::missing_panics_doc",
+        "-Wclippy::await_holding_lock",
+        "-Wclippy::await_holding_refcell_ref",
+        "-Wclippy::assertions_on_constants",
+        "-Wclippy::large_stack_arrays",
+        "-Wclippy::match_bool",
+        "-Wclippy::needless_bitwise_bool",
+        "-Wclippy::empty_enum",
+        "-Wclippy::enum_clike_unportable_variant",
+        "-Wclippy::enum_glob_use",
+        "-Wclippy::exhaustive_enums",
+        "-Wclippy::cast_precision_loss",
+        "-Wclippy::float_arithmetic",
+        "-Wclippy::float_cmp",
+        "-Wclippy::float_cmp_const",
+        "-Wclippy::imprecise_flops",
+        "-Wclippy::suboptimal_flops",
+        "-Wclippy::as_conversions",
+        "-Wclippy::cast_lossless",
+        "-Wclippy::cast_possible_truncation",
+        "-Wclippy::cast_possible_wrap",
+        "-Wclippy::cast_precision_loss",
+        "-Wclippy::ptr_as_ptr",
+        "-Wclippy::default_numeric_fallback",
+        "-Wclippy::checked_conversions",
+        "-Wclippy::integer_arithmetic",
+        "-Wclippy::cast_sign_loss",
+        "-Wclippy::modulo_arithmetic",
+        "-Wclippy::exhaustive_structs",
+        "-Wclippy::struct_excessive_bools",
+        "-Wclippy::unwrap_used",
+        "-Wclippy::expect_used",
+        "-Wclippy::expect_fun_call",
+        "-Wclippy::large_types_passed_by_value",
+        "-Wclippy::fn_params_excessive_bools",
+        "-Wclippy::trivially_copy_pass_by_ref",
+        "-Wclippy::inline_always",
+        "-Wclippy::inefficient_to_string",
+        "-Wclippy::dbg_macro",
+        "-Wclippy::wildcard_imports",
+        "-Wclippy::self_named_module_files",
+        "-Wclippy::mod_module_files",
+        "-Wclippy::disallowed_methods",
+        "-Wclippy::disallowed_script_idents",
+        "-Wclippy::disallowed_types",
+        "-Dtext_direction_codepoint_in_comment",
+        "-Dtext_direction_codepoint_in_literal",
+    ];
+    let flags = rust_flags; // rustflags();
+    let all_warnings = diagnose_all_warnings(rust_allow_flags.clone(), flags.clone());
+    if !all_warnings.is_empty() {
+        for flag in flags.clone() {
+            fix_a_warning(rust_allow_flags.clone(), flag.to_string(), &all_warnings);
         }
     }
-    for file in map.keys() {
-        let input = &origin_map[file];
-        restore_original(file, input);
-        let args = vec!["-q".to_string(), "-s".to_string(), "3000".to_string(), file.to_string()];
-        if let Ok(output) = txl(args) {
+    /* // Integrate with TXL
+    let _args = vec![
+            "-q".to_string(),
+            "-s".to_string(),
+            "3000".to_string(),
+            file.to_string(),
+    ];
+    if let Ok(output) = txl(args) {
             println!("{}", output);
-        }
     }
+    */
 }
 
-
 fn to_fix(
+    flag: &str,
     file: &String,
     warnings: Vec<Ran>,
     fixed_warnings: Vec<Ran>,
     remaining_warnings: Vec<Ran>,
     input: &String,
-    markedup: &[u8],
     output: &[u8],
 ) {
-    let file_name = PathBuf::from("diagnostics").join(file);
-    let trans_name = PathBuf::from("transform").join(file);
-    println!("Marked warning(s) into {:?}", &file_name);
-    if let Some(p) = file_name.parent() {
-        if !p.exists() {
-            std::fs::create_dir_all(p).ok();
-        }
-    }
-    if let Ok(content) = std::str::from_utf8(markedup) {
-        std::fs::write(&file_name, content).ok();
-    }
+    let trans_name = PathBuf::from("transform")
+        .join(flag.replace('-', ""))
+        .join(file);
     let input_markedup = &markup(input.as_bytes(), warnings);
     let output_markedup = &markup(output, remaining_warnings);
     let mut parser = Parser::new();
@@ -432,6 +578,7 @@ fn to_fix(
                     if !pp.exists() {
                         std::fs::create_dir_all(&pp).ok();
                     }
+                    let mut found = false;
                     let mut offset = Wrapping(0);
                     for k1 in orig_items.keys().sorted() {
                         if let Some(v1) = orig_items.get(k1) {
@@ -460,7 +607,9 @@ fn to_fix(
                                                         format!("{}{}", markedrules, vv2),
                                                     )
                                                     .ok();
-                                                    offset += Wrapping(v2.len()) - Wrapping(v1.len());
+                                                    found = true;
+                                                    offset +=
+                                                        Wrapping(v2.len()) - Wrapping(v1.len());
                                                 }
                                             }
                                         }
@@ -469,6 +618,9 @@ fn to_fix(
                                 }
                             }
                         }
+                    }
+                    if ! found && pp.exists() {
+                        std::fs::remove_dir_all(&pp).ok();
                     }
                 }
             }
@@ -519,4 +671,3 @@ fn remove_previously_generated_files(folder: &str, pattern: &str) {
         }
     }
 }
-
