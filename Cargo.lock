@@ -1317,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "rust-diagnostics"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "cargo",
@@ -1325,6 +1325,7 @@ dependencies = [
  "cc",
  "clap",
  "itertools",
+ "reqwest",
  "serde",
  "tree-sitter",
  "tree-sitter-parsers",

