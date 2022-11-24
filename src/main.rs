@@ -144,9 +144,7 @@ pub struct ExtractedNode<'query> {
 }
 
 // Split up the Rust source_file into individual items, indiced by their start_byte offsets
-fn splitup<'a>(
-    source: &'a [u8],
-) -> Result<HashMap<usize, &'a [u8]>> {
+fn splitup<'a>(source: &'a [u8]) -> Result<HashMap<usize, &'a [u8]>> {
     let s = std::str::from_utf8(source).ok().unwrap();
     let tree = parse(s, "rust");
     let mut output: HashMap<usize, &[u8]> = HashMap::new();
@@ -317,7 +315,7 @@ fn diagnose_all_warnings(allow_flags: Vec<&str>, flags: Vec<&str>) -> HashMap<St
 
 // process warnings from one RUSTC_FLAG at a time
 fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec<Ran>>) {
-    println!("{:?}", flag);
+    // println!("{:?}", flag);
     let mut flagged_map: HashMap<String, Vec<Ran>> = HashMap::new();
     for file in map.keys() {
         if let Some(v) = map.get(file) {
@@ -368,6 +366,7 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
         to_diagnostic(&mut fixed_map, args);
         for file in flagged_map.keys() {
             if let Ok(source) = read_to_string(file) {
+                // println!("{flag}");
                 let input = &origin_map[file];
                 let output = source.as_bytes();
                 if let Some(warnings) = flagged_map.get(file) {
@@ -391,11 +390,15 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
                             &flag,
                             file,
                             warnings.to_vec(),
-                            fixed_warnings,
-                            remaining_warnings,
+                            fixed_warnings.clone(),
+                            remaining_warnings.clone(),
                             input,
                             output,
                         );
+                        println!("{}", fixed_warnings.is_empty());
+                        if flag == "-Wclippy::unwrap_used" && fixed_warnings.is_empty() {
+                            fix_unwrap_used(file);
+                        }
                     }
                 }
             }
@@ -409,7 +412,6 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
 
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
-    // env::set_current_dir(Path::new("test")).ok();
     remove_previously_generated_files("./diagnostics", "*.rs"); // marked up
     remove_previously_generated_files("./original", "*.rs"); // before fix
     remove_previously_generated_files(".", "*.2.rs"); // transformed from
@@ -523,22 +525,26 @@ fn main() {
     ];
     let flags = rust_flags; // rustflags();
     let all_warnings = diagnose_all_warnings(rust_allow_flags.clone(), flags.clone());
+    // println!("{}", all_warnings.len());
     if !all_warnings.is_empty() {
         for flag in flags.clone() {
             fix_a_warning(rust_allow_flags.clone(), flag.to_string(), &all_warnings);
         }
     }
-    /* // Integrate with TXL
-    let _args = vec![
+}
+
+fn fix_unwrap_used(file: &str) {
+    // Integrate with TXL
+    let args = vec![
             "-q".to_string(),
             "-s".to_string(),
             "3000".to_string(),
             file.to_string(),
+            "unwrap_used.txl".to_string(),
     ];
-    if let Ok(output) = txl(args) {
+    if let Ok(output) = txl_rs::txl(args) {
             println!("{}", output);
     }
-    */
 }
 
 fn to_fix(
@@ -555,12 +561,8 @@ fn to_fix(
         .join(file);
     let input_markedup = &markup(input.as_bytes(), warnings);
     let output_markedup = &markup(output, remaining_warnings);
-    if let Ok(orig_items) = splitup(
-        input_markedup,
-    ) {
-        if let Ok(output_items) = splitup(
-            output_markedup,
-        ) {
+    if let Ok(orig_items) = splitup(input_markedup) {
+        if let Ok(output_items) = splitup(output_markedup) {
             if let Some(t) = trans_name.parent() {
                 let path = PathBuf::from(&file);
                 if let Some(p) = path.file_stem() {
@@ -609,7 +611,7 @@ fn to_fix(
                             }
                         }
                     }
-                    if ! found && pp.exists() {
+                    if !found && pp.exists() {
                         std::fs::remove_dir_all(&pp).ok();
                     }
                 }
@@ -659,5 +661,30 @@ fn remove_previously_generated_files(folder: &str, pattern: &str) {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_main() {
+        let dir = std::path::Path::new("test");
+        if !dir.exists() {
+            Command::new("cargo")
+                .args(["init", "--bin", "test"])
+                .spawn()
+                .ok();
+            let code = r#"
+fn main() {
+    let s = std::fs::read_to_string("Cargo.toml").unwrap();
+    println!("{s}");
+}
+"#;
+            std::fs::write("test/src/main.rs", code).ok();
+        }
+        std::env::set_current_dir(dir).ok();
+        main();
+        assert!(!std::path::Path::new("test/transform/Wclippy::unwrap_used/0.2.rs").exists());
     }
 }
