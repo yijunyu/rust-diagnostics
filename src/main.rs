@@ -357,6 +357,7 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
             "--message-format=json",
             "--fix",
             "--allow-dirty",
+            "--allow-no-vcs",
             "--broken-code",
             "--",
         ];
