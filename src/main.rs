@@ -535,7 +535,7 @@ fn main() {
 }
 
 extern crate reqwest;
-const URL: &str = "http://185.190.206.130/unwrap_used.txl";
+const URL: &str = "http://bertrust.s3.amazonaws.com/unwrap_used.txl";
 fn fix_unwrap_used(file: &str) {
     if !std::path::Path::new("unwrap_used.txl").exists() {
         if let Ok(resp) = reqwest::blocking::get(URL) {
