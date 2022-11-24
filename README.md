@@ -73,7 +73,7 @@ that contains the fixed warnings.
 - [x] Integrate with `txl` through `txl-rs`
 - [x] Get RustCFlags from `cargo`
 - [x] Call fix only when the number of warnings is larger than 0
-- [ ] Integrate with transformation systems to fix some of the warnings not yet fixed by clippy
+- [x] Integrate with transformation systems to fix some of the warnings not yet fixed by clippy
 
 ## Acknowledgement
 
