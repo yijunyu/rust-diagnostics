@@ -351,6 +351,9 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
                     }
                 }
             }
+            if flag == "-Wclippy::unwrap_used" {
+                fix_unwrap_used(file);
+            }
         }
         let mut args = vec![
             "clippy",
@@ -367,7 +370,6 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
         to_diagnostic(&mut fixed_map, args);
         for file in flagged_map.keys() {
             if let Ok(source) = read_to_string(file) {
-                // println!("{flag}");
                 let input = &origin_map[file];
                 let output = source.as_bytes();
                 if let Some(warnings) = flagged_map.get(file) {
@@ -396,10 +398,6 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
                             input,
                             output,
                         );
-                        // println!("{}", fixed_warnings.is_empty());
-                        if flag == "-Wclippy::unwrap_used" && fixed_warnings.is_empty() {
-                            fix_unwrap_used(file);
-                        }
                     }
                 }
             }
@@ -544,7 +542,6 @@ fn fix_unwrap_used(file: &str) {
             }
         }
     }
-    // Integrate with TXL
     let args = vec![
             "-q".to_string(),
             "-s".to_string(),
@@ -553,7 +550,8 @@ fn fix_unwrap_used(file: &str) {
             "unwrap_used.txl".to_string(),
     ];
     if let Ok(output) = txl_rs::txl(args) {
-            println!("{}", output);
+        println!("{}", output);
+        std::fs::write(file, output).ok();
     }
 }
 
@@ -567,7 +565,7 @@ fn to_fix(
     output: &[u8],
 ) {
     let trans_name = PathBuf::from("transform")
-        .join(flag.replace('-', ""))
+        .join(flag.replace("-Wclippy::", ""))
         .join(file);
     let input_markedup = &markup(input.as_bytes(), warnings);
     let output_markedup = &markup(output, remaining_warnings);
@@ -576,10 +574,6 @@ fn to_fix(
             if let Some(t) = trans_name.parent() {
                 let path = PathBuf::from(&file);
                 if let Some(p) = path.file_stem() {
-                    let pp = t.join(p);
-                    if !pp.exists() {
-                        std::fs::create_dir_all(&pp).ok();
-                    }
                     let mut found = false;
                     let mut offset = Wrapping(0);
                     for k1 in orig_items.keys().sorted() {
@@ -587,6 +581,10 @@ fn to_fix(
                             for k2 in output_items.keys().sorted() {
                                 if let Some(v2) = output_items.get(k2) {
                                     if (Wrapping(*k1) + offset) == Wrapping(*k2) && *v1 != *v2 {
+                                        let pp = t.join(p);
+                                        if !pp.exists() {
+                                            std::fs::create_dir_all(&pp).ok();
+                                        }
                                         let trans_filename1 = pp.join(format!("{}.2.rs", &k1));
                                         let trans_filename2 = pp.join(format!("{}.3.rs", &k1));
                                         if let Ok(vv1) = std::str::from_utf8(v1) {
@@ -615,14 +613,14 @@ fn to_fix(
                                                 }
                                             }
                                         }
+                                        if !found && pp.exists() {
+                                            std::fs::remove_dir_all(&pp).ok();
+                                        }
                                         break;
                                     }
                                 }
                             }
                         }
-                    }
-                    if !found && pp.exists() {
-                        std::fs::remove_dir_all(&pp).ok();
                     }
                 }
             }
