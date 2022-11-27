@@ -74,6 +74,7 @@ that contains the fixed warnings.
 - [x] Get RustCFlags from `cargo`
 - [x] Call fix only when the number of warnings is larger than 0
 - [x] Integrate with transformation systems to fix some of the warnings not yet fixed by clippy
+- [x] Perform `rustfmt` to output of TXL transformations
 
 ## Acknowledgement
 

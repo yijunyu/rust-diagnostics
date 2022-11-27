@@ -144,12 +144,12 @@ pub struct ExtractedNode<'query> {
 }
 
 // Split up the Rust source_file into individual items, indiced by their start_byte offsets
-fn splitup<'a>(source: &'a [u8]) -> Result<HashMap<usize, &'a [u8]>> {
-    let s = std::str::from_utf8(source).ok().unwrap();
-    let tree = parse(s, "rust");
+fn splitup(source: &[u8]) -> Result<HashMap<usize, &[u8]>> {
     let mut output: HashMap<usize, &[u8]> = HashMap::new();
-    if let Ok(query) = language::Language::Rust.parse_query(
-        "([
+    if let Ok(s) = std::str::from_utf8(source) {
+        let tree = parse(s, "rust");
+        if let Ok(query) = language::Language::Rust.parse_query(
+            "([
       (const_item) @fn
       (macro_invocation) @fn
       (macro_definition) @fn
@@ -172,34 +172,35 @@ fn splitup<'a>(source: &'a [u8]) -> Result<HashMap<usize, &'a [u8]>> {
       (extern_crate_declaration) @fn
       (static_item) @fn
             ])",
-    ) {
-        let captures = query.capture_names().to_vec();
-        let mut cursor = QueryCursor::new();
-        let extracted = cursor
-            .matches(&query, tree.root_node(), source)
-            .flat_map(|query_match| query_match.captures)
-            .map(|capture| {
-                if let Ok(idx) = usize::try_from(capture.index) {
-                    let name = &captures[idx];
-                    let node = capture.node;
-                    Ok(ExtractedNode {
-                        name,
-                        start_byte: node.start_byte(),
-                        end_byte: node.end_byte(),
-                    })
-                } else {
-                    Ok(ExtractedNode {
-                        name: "",
-                        start_byte: 0,
-                        end_byte: 0,
-                    })
-                }
-            })
-            .collect::<Result<Vec<ExtractedNode>>>()?;
-        for m in extracted {
-            if m.name == "fn" {
-                if let Ok(code) = std::str::from_utf8(&source[m.start_byte..m.end_byte]) {
-                    output.insert(m.start_byte, code.as_bytes());
+        ) {
+            let captures = query.capture_names().to_vec();
+            let mut cursor = QueryCursor::new();
+            let extracted = cursor
+                .matches(&query, tree.root_node(), source)
+                .flat_map(|query_match| query_match.captures)
+                .map(|capture| {
+                    if let Ok(idx) = usize::try_from(capture.index) {
+                        let name = &captures[idx];
+                        let node = capture.node;
+                        Ok(ExtractedNode {
+                            name,
+                            start_byte: node.start_byte(),
+                            end_byte: node.end_byte(),
+                        })
+                    } else {
+                        Ok(ExtractedNode {
+                            name: "",
+                            start_byte: 0,
+                            end_byte: 0,
+                        })
+                    }
+                })
+                .collect::<Result<Vec<ExtractedNode>>>()?;
+            for m in extracted {
+                if m.name == "fn" {
+                    if let Ok(code) = std::str::from_utf8(&source[m.start_byte..m.end_byte]) {
+                        output.insert(m.start_byte, code.as_bytes());
+                    }
                 }
             }
         }
@@ -543,15 +544,25 @@ fn fix_unwrap_used(file: &str) {
         }
     }
     let args = vec![
-            "-q".to_string(),
-            "-s".to_string(),
-            "3000".to_string(),
-            file.to_string(),
-            "unwrap_used.txl".to_string(),
+        "-q".to_string(),
+        "-s".to_string(),
+        "3000".to_string(),
+        file.to_string(),
+        "unwrap_used.txl".to_string(),
     ];
     if let Ok(output) = txl_rs::txl(args) {
-        println!("{}", output);
         std::fs::write(file, output).ok();
+        if let Ok(command) = Command::new("rustfmt")
+            .args([file])
+            .stdout(Stdio::piped())
+            .spawn()
+        {
+            if let Ok(_output) = command.wait_with_output() {
+                if let Ok(s) = std::fs::read_to_string(file) {
+                    println!("{s}");
+                }
+            }
+        }
     }
 }
 
