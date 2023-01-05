@@ -19,65 +19,14 @@ use cargo::{
     util::command_prelude::{CompileMode, ProfileChecking},
 };
 use clap::Arg;
+use structopt::StructOpt;
 
-/**
- * You can skip the above compiler flags to inserting the following options into `$HOME/.cargo/config`
-```rust
-[target.'cfg(all())']
-rustflags = [
-      "-Wclippy::missing_errors_doc",
-      "-Wclippy::missing_panics_doc",
-      "-Wclippy::await_holding_lock",
-      "-Wclippy::await_holding_refcell_ref",
-      "-Aclippy::assertions_on_constants",
-      "-Wclippy::large_stack_arrays",
-      "-Wclippy::match_bool",
-      "-Wclippy::needless_bitwise_bool",
-      "-Wclippy::empty_enum",
-      "-Aclippy::empty_enum",
-      "-Aclippy::enum_clike_unportable_variant",
-      "-Wclippy::enum_glob_use",
-      "-Aclippy::enum_glob_use",
-      "-Wclippy::exhaustive_enums",
-      "-Wclippy::cast_precision_loss",
-      "-Wclippy::float_arithmetic",
-      "-Wclippy::float_cmp",
-      "-Wclippy::float_cmp_const",
-      "-Wclippy::imprecise_flops",
-      "-Wclippy::suboptimal_flops",
-      "-Wclippy::as_conversions",
-      "-Wclippy::cast_lossless",
-      "-Wclippy::cast_possible_truncation",
-      "-Wclippy::cast_possible_wrap",
-      "-Wclippy::cast_precision_loss",
-      "-Wclippy::ptr_as_ptr",
-      "-Wclippy::default_numeric_fallback",
-      "-Wclippy::checked_conversions",
-      "-Wclippy::integer_arithmetic",
-      "-Wclippy::cast_sign_loss",
-      "-Wclippy::modulo_arithmetic",
-      "-Wclippy::exhaustive_structs",
-      "-Wclippy::struct_excessive_bools",
-      "-Wclippy::unwrap_used",
-      "-Wclippy::expect_used",
-      "-Aclippy::expect_fun_call",
-      "-Wclippy::large_types_passed_by_value",
-      "-Wclippy::fn_params_excessive_bools",
-      "-Wclippy::trivially_copy_pass_by_ref",
-      "-Wclippy::inline_always",
-      "-Wclippy::inefficient_to_string",
-      "-Wclippy::dbg_macro",
-      "-Wclippy::wildcard_imports",
-      "-Wclippy::self_named_module_files",
-      "-Wclippy::mod_module_files",
-      "-Wclippy::disallowed_methods",
-      "-Wclippy::disallowed_script_idents",
-      "-Wclippy::disallowed_types",
-      "-Dtext_direction_codepoint_in_comment",
-      "-Dtext_direction_codepoint_in_literal"
-]
-```
- */
+#[derive(StructOpt)]
+struct Args {
+    #[structopt(name = "flags", long)]
+    /// warnings concerning the warning flags
+    flags: Vec<String>,
+}
 
 #[derive(Debug, Clone)]
 struct Ran {
@@ -213,7 +162,7 @@ fn restore_original(file_name: &String, content: &String) {
     std::fs::write(file_name, content).ok();
 }
 
-fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<&str>) {
+fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<String>) {
     if let Ok(mut command) = Command::new("cargo")
         .args(args)
         .stdout(Stdio::piped())
@@ -281,10 +230,11 @@ fn _rustflags() -> Vec<String> {
 }
 
 // markup all warnings into diagnostics
-fn diagnose_all_warnings(allow_flags: Vec<&str>, flags: Vec<&str>) -> HashMap<String, Vec<Ran>> {
-    let mut args = vec!["clippy", "--message-format=json", "--"];
-    args.append(&mut allow_flags.clone());
-    args.append(&mut flags.clone());
+fn diagnose_all_warnings(flags: Vec<String>) -> HashMap<String, Vec<Ran>> {
+    let mut args = vec!["clippy".to_string(), "--message-format=json".to_string(), "--".to_string()];
+    for flag in flags {
+        args.push(format!("-Wclippy::{}", flag));
+    }
     let mut map: HashMap<String, Vec<Ran>> = HashMap::new();
     to_diagnostic(&mut map, args);
     if !map.is_empty() {
@@ -315,8 +265,8 @@ fn diagnose_all_warnings(allow_flags: Vec<&str>, flags: Vec<&str>) -> HashMap<St
 }
 
 // process warnings from one RUSTC_FLAG at a time
-fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec<Ran>>) {
-    // println!("{:?}", flag);
+fn fix_warnings(flags: Vec<String>, map: &HashMap<String, Vec<Ran>>) {
+    for flag in &flags {
     let mut flagged_map: HashMap<String, Vec<Ran>> = HashMap::new();
     for file in map.keys() {
         if let Some(v) = map.get(file) {
@@ -357,16 +307,17 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
             }
         }
         let mut args = vec![
-            "clippy",
-            "--message-format=json",
-            "--fix",
-            "--allow-dirty",
-            "--allow-no-vcs",
-            "--broken-code",
-            "--",
+            "clippy".to_string(),
+            "--message-format=json".to_string(),
+            "--fix".to_string(),
+            "--allow-dirty".to_string(),
+            "--allow-no-vcs".to_string(),
+            "--broken-code".to_string(),
+            "--".to_string(),
         ];
-        args.append(&mut allow_flags.clone());
-        args.append(&mut vec![flag.as_str()]);
+        for flag in &flags {
+            args.push(flag.to_string());
+        }
         let mut fixed_map: HashMap<String, Vec<Ran>> = HashMap::new();
         to_diagnostic(&mut fixed_map, args);
         for file in flagged_map.keys() {
@@ -408,129 +359,79 @@ fn fix_a_warning(allow_flags: Vec<&str>, flag: String, map: &HashMap<String, Vec
             restore_original(file, input);
         }
     }
+    }
 }
 
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
+
     remove_previously_generated_files("./diagnostics", "*.rs"); // marked up
     remove_previously_generated_files("./original", "*.rs"); // before fix
     remove_previously_generated_files(".", "*.2.rs"); // transformed from
     remove_previously_generated_files(".", "*.3.rs"); // transformed to
-    let rust_allow_flags = vec![
-        "-Adead_code",
-        "-Anon_snake_case",
-        "-Aclippy::ptr_arg",
-        "-Aclippy::too_many_arguments",
-        "-Aclippy::missing_errors_doc",
-        "-Aclippy::missing_panics_doc",
-        "-Aclippy::await_holding_lock",
-        "-Aclippy::await_holding_refcell_ref",
-        "-Aclippy::assertions_on_constants",
-        "-Aclippy::large_stack_arrays",
-        "-Aclippy::match_bool",
-        "-Aclippy::needless_bitwise_bool",
-        "-Aclippy::empty_enum",
-        "-Aclippy::empty_enum",
-        "-Aclippy::enum_clike_unportable_variant",
-        "-Aclippy::enum_glob_use",
-        "-Aclippy::enum_glob_use",
-        "-Aclippy::exhaustive_enums",
-        "-Aclippy::cast_precision_loss",
-        "-Aclippy::float_arithmetic",
-        "-Aclippy::float_cmp",
-        "-Aclippy::float_cmp_const",
-        "-Aclippy::imprecise_flops",
-        "-Aclippy::suboptimal_flops",
-        "-Aclippy::as_conversions",
-        "-Aclippy::cast_lossless",
-        "-Aclippy::cast_possible_truncation",
-        "-Aclippy::cast_possible_wrap",
-        "-Aclippy::cast_precision_loss",
-        "-Aclippy::ptr_as_ptr",
-        "-Aclippy::default_numeric_fallback",
-        "-Aclippy::checked_conversions",
-        "-Aclippy::integer_arithmetic",
-        "-Aclippy::cast_sign_loss",
-        "-Aclippy::modulo_arithmetic",
-        "-Aclippy::exhaustive_structs",
-        "-Aclippy::struct_excessive_bools",
-        "-Aclippy::unwrap_used",
-        "-Aclippy::expect_used",
-        "-Aclippy::expect_fun_call",
-        "-Aclippy::large_types_passed_by_value",
-        "-Aclippy::fn_params_excessive_bools",
-        "-Aclippy::trivially_copy_pass_by_ref",
-        "-Aclippy::inline_always",
-        "-Aclippy::inefficient_to_string",
-        "-Aclippy::dbg_macro",
-        "-Aclippy::wildcard_imports",
-        "-Aclippy::self_named_module_files",
-        "-Aclippy::mod_module_files",
-        "-Aclippy::disallowed_methods",
-        "-Aclippy::disallowed_script_idents",
-        "-Aclippy::disallowed_types",
-        "-Atext_direction_codepoint_in_comment",
-        "-Atext_direction_codepoint_in_literal",
-    ];
-
-    let rust_flags: std::vec::Vec<&str> = vec![
-        "-Wclippy::missing_errors_doc",
-        "-Wclippy::missing_panics_doc",
-        "-Wclippy::await_holding_lock",
-        "-Wclippy::await_holding_refcell_ref",
-        "-Wclippy::assertions_on_constants",
-        "-Wclippy::large_stack_arrays",
-        "-Wclippy::match_bool",
-        "-Wclippy::needless_bitwise_bool",
-        "-Wclippy::empty_enum",
-        "-Wclippy::enum_clike_unportable_variant",
-        "-Wclippy::enum_glob_use",
-        "-Wclippy::exhaustive_enums",
-        "-Wclippy::cast_precision_loss",
-        "-Wclippy::float_arithmetic",
-        "-Wclippy::float_cmp",
-        "-Wclippy::float_cmp_const",
-        "-Wclippy::imprecise_flops",
-        "-Wclippy::suboptimal_flops",
-        "-Wclippy::as_conversions",
-        "-Wclippy::cast_lossless",
-        "-Wclippy::cast_possible_truncation",
-        "-Wclippy::cast_possible_wrap",
-        "-Wclippy::cast_precision_loss",
-        "-Wclippy::ptr_as_ptr",
-        "-Wclippy::default_numeric_fallback",
-        "-Wclippy::checked_conversions",
-        "-Wclippy::integer_arithmetic",
-        "-Wclippy::cast_sign_loss",
-        "-Wclippy::modulo_arithmetic",
-        "-Wclippy::exhaustive_structs",
-        "-Wclippy::struct_excessive_bools",
-        "-Wclippy::unwrap_used",
-        "-Wclippy::expect_used",
-        "-Wclippy::expect_fun_call",
-        "-Wclippy::large_types_passed_by_value",
-        "-Wclippy::fn_params_excessive_bools",
-        "-Wclippy::trivially_copy_pass_by_ref",
-        "-Wclippy::inline_always",
-        "-Wclippy::inefficient_to_string",
-        "-Wclippy::dbg_macro",
-        "-Wclippy::wildcard_imports",
-        "-Wclippy::self_named_module_files",
-        "-Wclippy::mod_module_files",
-        "-Wclippy::disallowed_methods",
-        "-Wclippy::disallowed_script_idents",
-        "-Wclippy::disallowed_types",
-        "-Dtext_direction_codepoint_in_comment",
-        "-Dtext_direction_codepoint_in_literal",
-    ];
-    let flags = rust_flags; // rustflags();
-    let all_warnings = diagnose_all_warnings(rust_allow_flags.clone(), flags.clone());
-    // println!("{}", all_warnings.len());
-    if !all_warnings.is_empty() {
-        for flag in flags.clone() {
-            fix_a_warning(rust_allow_flags.clone(), flag.to_string(), &all_warnings);
-        }
-    }
+    let args = Args::from_args();
+    let mut flags = args.flags;
+    if flags.is_empty() {
+      flags = vec![
+        "ptr_arg".to_string(),
+        "too_many_arguments".to_string(),
+        "missing_errors_doc".to_string(),
+        "missing_panics_doc".to_string(),
+        "await_holding_lock".to_string(),
+        "await_holding_refcell_ref".to_string(),
+        "assertions_on_constants".to_string(),
+        "large_stack_arrays".to_string(),
+        "match_bool".to_string(),
+        "needless_bitwise_bool".to_string(),
+        "empty_enum".to_string(),
+        "empty_enum".to_string(),
+        "enum_clike_unportable_variant".to_string(),
+        "enum_glob_use".to_string(),
+        "enum_glob_use".to_string(),
+        "exhaustive_enums".to_string(),
+        "cast_precision_loss".to_string(),
+        "float_arithmetic".to_string(),
+        "float_cmp".to_string(),
+        "float_cmp_const".to_string(),
+        "imprecise_flops".to_string(),
+        "suboptimal_flops".to_string(),
+        "as_conversions".to_string(),
+        "cast_lossless".to_string(),
+        "cast_possible_truncation".to_string(),
+        "cast_possible_wrap".to_string(),
+        "cast_precision_loss".to_string(),
+        "ptr_as_ptr".to_string(),
+        "default_numeric_fallback".to_string(),
+        "checked_conversions".to_string(),
+        "integer_arithmetic".to_string(),
+        "cast_sign_loss".to_string(),
+        "modulo_arithmetic".to_string(),
+        "exhaustive_structs".to_string(),
+        "struct_excessive_bools".to_string(),
+        "unwrap_used".to_string(),
+        "expect_used".to_string(),
+        "expect_fun_call".to_string(),
+        "large_types_passed_by_value".to_string(),
+        "fn_params_excessive_bools".to_string(),
+        "trivially_copy_pass_by_ref".to_string(),
+        "inline_always".to_string(),
+        "inefficient_to_string".to_string(),
+        "dbg_macro".to_string(),
+        "wildcard_imports".to_string(),
+        "self_named_module_files".to_string(),
+        "mod_module_files".to_string(),
+        "disallowed_methods".to_string(),
+        "disallowed_script_idents".to_string(),
+        "disallowed_types".to_string(),
+      ];
+   }
+   let all_warnings = diagnose_all_warnings(flags.clone());
+   let mut count = 0;
+   all_warnings.iter().for_each(|(_k, v)| {
+       count += v.len();
+   });
+   println!("There are {} warnings in {} files.", count, all_warnings.len());
+   fix_warnings(flags, &all_warnings);
 }
 
 extern crate reqwest;
