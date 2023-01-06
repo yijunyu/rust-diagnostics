@@ -75,6 +75,11 @@ that contains the fixed warnings.
 - [x] Call fix only when the number of warnings is larger than 0
 - [x] Integrate with transformation systems to fix some of the warnings not yet fixed by clippy
 - [x] Perform `rustfmt` to output of TXL transformations
+- [x] Move the implementation of optional functionalities into rustc_flags, fix features to reduce the dependencies
+- [x] Add a `--patch <id>` feature to print out the patch of <id>^..<id> where <id> is a commit id
+- [ ] Make the `--patch <id>` feature to print out the patch of HEAD..<id> where HEAD is the current work tree
+- [ ] Print out the hunks only when they are relevant to the spans of warning locations
+      
 
 ## Acknowledgement
 

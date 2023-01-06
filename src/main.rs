@@ -53,6 +53,10 @@ struct Ran {
     end: usize,
     suggestion: String,
     note: String,
+    start_line: usize,
+    end_line: usize,
+    end_column: usize,
+    start_column: usize,
 }
 
 // insert diagnostic code as an markup element around the code causing the diagnostic message
@@ -204,7 +208,11 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<String>) {
                                             message_code.clone().code
                                         ),
                                         start: x,
+                                        start_line: usize::try_from(s.line_start).unwrap(),
+                                        start_column: usize::try_from(s.column_start).unwrap(),
                                         end: y,
+                                        end_line: usize::try_from(s.line_end).unwrap(),
+                                        end_column: usize::try_from(s.column_end).unwrap(),
                                         suggestion: format!("{:?}", s.suggested_replacement),
                                         note: format!("{:?}", sub_messages(&msg.message.children)),
                                     };
@@ -470,23 +478,40 @@ fn main() {
         {
             if let Some(id) = patch {
                 let repo = git2::Repository::open(".").unwrap();
-                let c1 = repo.find_commit(git2::Oid::from_str(&id).unwrap()).unwrap();
-                if c1.parents().len() != 1 {
-                    return;
-                }
-                let c2 = c1.parent(0).unwrap();
-                let a = Some(c2.tree().unwrap());
-                let b = c1.tree().unwrap();
+                let c1 = repo.find_commit(repo.head().unwrap().target().unwrap()).unwrap();
+                let c2 = repo.find_commit(git2::Oid::from_str(&id).unwrap()).unwrap();
+                let a = Some(c1.tree().unwrap());
+                let b = Some(c2.tree().unwrap());
                 let mut diffopts2 = git2::DiffOptions::new();
-                let diff = repo.diff_tree_to_tree(a.as_ref(), Some(&b), Some(&mut diffopts2)).unwrap();
+                let diff = repo.diff_tree_to_tree(a.as_ref(), b.as_ref(), Some(&mut diffopts2)).unwrap();
                 println!("id = {id}");
                 diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
-                    match line.origin() {
-                        ' ' | '+' | '-' => print!("{}", line.origin()),
-                        _ => {}
+                    let p = _delta.old_file().path().unwrap();
+                    let mut overlap = false;
+                    if let Some(h) = _hunk {
+                    all_warnings.iter().for_each(|(k, v)| {
+                        v.iter().for_each(|m| {
+                            if std::path::Path::new(k) == p 
+                                && usize::try_from(h.old_start()).unwrap() <= m.end_line
+                                && usize::try_from(h.old_start() + h.old_lines()).unwrap() >= m.start_line 
+                            {
+                                overlap = true;
+                            }
+                        });
+                    });
+                    if overlap {
+                        match line.origin() {
+                            ' ' | '+' | '-' => print!("{}", line.origin()),
+                            _ => {}
+                        }
+                        print!("{}", std::str::from_utf8(line.content()).unwrap());
+                        true
+                    } else {
+                        true
                     }
-                    print!("{}", std::str::from_utf8(line.content()).unwrap());
-                    true
+                    } else {
+                        true
+                    }
                 }).ok();
             }
         } 
