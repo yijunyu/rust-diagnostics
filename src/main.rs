@@ -6,6 +6,12 @@ use std::{
     process::{Command, Stdio},
 };
 use serde::Serialize;
+#[cfg(patch)]
+mod patch 
+{
+    use git2::{Commit, DiffOptions, ObjectType, Repository, Signature, Time};
+    use git2::{DiffFormat, Error, Pathspec};
+}
 
 #[cfg(fix)]
 mod fix 
@@ -35,6 +41,9 @@ struct Args {
     #[structopt(name = "flags", long)]
     /// warnings concerning the warning flags
     flags: Vec<String>,
+    #[structopt(name = "patch", long)]
+    /// reduce patch id to hunks that may be relevant to the warnings
+    patch: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -383,9 +392,12 @@ fn fix_warnings(flags: Vec<String>, map: &HashMap<String, Vec<Ran>>) {
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
     remove_previously_generated_files("./diagnostics", "*.rs"); // marked up
-    remove_previously_generated_files("./original", "*.rs"); // before fix
-    remove_previously_generated_files(".", "*.2.rs"); // transformed from
-    remove_previously_generated_files(".", "*.3.rs"); // transformed to
+    #[cfg(fix)]
+    {
+        remove_previously_generated_files("./original", "*.rs"); // before fix
+        remove_previously_generated_files(".", "*.2.rs"); // transformed from
+        remove_previously_generated_files(".", "*.3.rs"); // transformed to
+    }
     let args = Args::from_args();
     let mut flags = args.flags;
     if flags.is_empty() {
@@ -452,6 +464,38 @@ fn main() {
         count,
         all_warnings.len()
     );
+    let patch = args.patch;
+    if patch.is_some() {
+        #[cfg(feature="patch")]
+        {
+            if let Some(id) = patch {
+                let repo = git2::Repository::open(".").unwrap();
+                let c1 = repo.find_commit(git2::Oid::from_str(&id).unwrap()).unwrap();
+                if c1.parents().len() != 1 {
+                    return;
+                }
+                let c2 = c1.parent(0).unwrap();
+                let a = Some(c2.tree().unwrap());
+                let b = c1.tree().unwrap();
+                let mut diffopts2 = git2::DiffOptions::new();
+                let diff = repo.diff_tree_to_tree(a.as_ref(), Some(&b), Some(&mut diffopts2)).unwrap();
+                println!("id = {id}");
+                diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+                    match line.origin() {
+                        ' ' | '+' | '-' => print!("{}", line.origin()),
+                        _ => {}
+                    }
+                    print!("{}", std::str::from_utf8(line.content()).unwrap());
+                    true
+                }).ok();
+            }
+        } 
+        #[cfg(not(feature="patch"))]
+        {
+            println!("To use the `--patch` option, please enable the `patch` feature");
+        }
+    }
+
     #[cfg(fix)]
     fix_warnings(flags, &all_warnings);
 }

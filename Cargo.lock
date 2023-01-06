@@ -1381,6 +1381,7 @@ dependencies = [
  "cargo_metadata",
  "cc",
  "clap 3.2.23",
+ "git2",
  "itertools",
  "reqwest",
  "serde",
