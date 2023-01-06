@@ -1,24 +1,33 @@
-mod language;
-use anyhow::Result;
 use cargo_metadata::{diagnostic::Diagnostic, Message};
-use itertools::Itertools;
-use serde::Serialize;
 use std::{
     collections::HashMap,
     fs::read_to_string,
-    num::Wrapping,
     path::PathBuf,
     process::{Command, Stdio},
 };
-use tree_sitter::QueryCursor;
-use tree_sitter_parsers::parse;
+use serde::Serialize;
 
-use cargo::util::command_prelude::{ArgMatchesExt, Config};
-use cargo::{
-    core::compiler::{CompileKind, RustcTargetData},
-    util::command_prelude::{CompileMode, ProfileChecking},
-};
-use clap::Arg;
+#[cfg(fix)]
+mod fix 
+{
+    mod language;
+    use itertools::Itertools;
+    use tree_sitter::QueryCursor;
+    use std::num::Wrapping;
+    use tree_sitter_parsers::parse;
+}
+
+#[cfg(rustc_flags)]
+mod rustc_flags 
+{
+    use cargo::util::command_prelude::{ArgMatchesExt, Config};
+    use cargo::{
+        core::compiler::{CompileKind, RustcTargetData},
+        util::command_prelude::{CompileMode, ProfileChecking},
+    };
+    use clap::Arg;
+}
+
 use structopt::StructOpt;
 
 #[derive(StructOpt)]
@@ -74,6 +83,7 @@ fn markup(source: &[u8], map: Vec<Ran>) -> Vec<u8> {
     output
 }
 
+#[cfg(fix)]
 // list the relevant rules as comments
 fn markup_rules(start: Wrapping<usize>, end: Wrapping<usize>, map: Vec<Ran>) -> Vec<u8> {
     let mut output = Vec::new();
@@ -92,6 +102,9 @@ pub struct ExtractedNode<'query> {
     end_byte: usize,
 }
 
+#[cfg(fix)]
+mod fix {
+use anyhow::Result;
 // Split up the Rust source_file into individual items, indiced by their start_byte offsets
 fn splitup(source: &[u8]) -> Result<HashMap<usize, &[u8]>> {
     let mut output: HashMap<usize, &[u8]> = HashMap::new();
@@ -156,12 +169,11 @@ fn splitup(source: &[u8]) -> Result<HashMap<usize, &[u8]>> {
     }
     Ok(output)
 }
-
 // restore the original file
 fn restore_original(file_name: &String, content: &String) {
     std::fs::write(file_name, content).ok();
 }
-
+}
 fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<String>) {
     if let Ok(mut command) = Command::new("cargo")
         .args(args)
@@ -206,9 +218,10 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<String>) {
     }
 }
 
+#[cfg(rustc_flags)]
 // Find all the RUSTC_FLAGS enabled by `cargo`
 // Adapted from https://github.com/rust-lang/cargo/blob/master/src/bin/cargo/commands/build.rs
-fn _rustflags() -> Vec<String> {
+fn rustflags() -> Vec<String> {
     let args = clap::Command::new("rust-diagnostics")
         .arg(Arg::new("cfg").short('c').takes_value(true))
         .get_matches(); // builds the instance of ArgMatches
@@ -231,7 +244,11 @@ fn _rustflags() -> Vec<String> {
 
 // markup all warnings into diagnostics
 fn diagnose_all_warnings(flags: Vec<String>) -> HashMap<String, Vec<Ran>> {
-    let mut args = vec!["clippy".to_string(), "--message-format=json".to_string(), "--".to_string()];
+    let mut args = vec![
+        "clippy".to_string(),
+        "--message-format=json".to_string(),
+        "--".to_string(),
+    ];
     for flag in flags {
         args.push(format!("-Wclippy::{}", flag));
     }
@@ -264,101 +281,102 @@ fn diagnose_all_warnings(flags: Vec<String>) -> HashMap<String, Vec<Ran>> {
     map
 }
 
+#[cfg(fix)]
 // process warnings from one RUSTC_FLAG at a time
 fn fix_warnings(flags: Vec<String>, map: &HashMap<String, Vec<Ran>>) {
     for flag in &flags {
-    let mut flagged_map: HashMap<String, Vec<Ran>> = HashMap::new();
-    for file in map.keys() {
-        if let Some(v) = map.get(file) {
-            let mut new_v = Vec::new();
-            for r in v {
-                let rule = &flag[2..];
-                if r.name == format!("#[Warning({})", &rule) {
-                    let r1 = Ran {
-                        name: r.name.clone(),
-                        start: r.start,
-                        end: r.end,
-                        suggestion: r.suggestion.clone(),
-                        note: r.note.clone(),
-                    };
-                    new_v.push(r1);
-                }
-            }
-            if !new_v.is_empty() {
-                flagged_map.insert(file.to_string(), new_v);
-            }
-        }
-    }
-    if !flagged_map.is_empty() {
-        let mut origin_map: HashMap<String, String> = HashMap::new();
-        let mut markup_map: HashMap<String, String> = HashMap::new();
-        for file in flagged_map.keys() {
-            if let Ok(source) = read_to_string(file) {
-                if let Some(v) = flagged_map.get(file) {
-                    let markedup = &markup(source.as_bytes(), v.to_vec());
-                    origin_map.insert(file.to_string(), source);
-                    if let Ok(s) = std::str::from_utf8(markedup) {
-                        markup_map.insert(file.to_string(), s.to_string());
+        let mut flagged_map: HashMap<String, Vec<Ran>> = HashMap::new();
+        for file in map.keys() {
+            if let Some(v) = map.get(file) {
+                let mut new_v = Vec::new();
+                for r in v {
+                    let rule = &flag[2..];
+                    if r.name == format!("#[Warning({})", &rule) {
+                        let r1 = Ran {
+                            name: r.name.clone(),
+                            start: r.start,
+                            end: r.end,
+                            suggestion: r.suggestion.clone(),
+                            note: r.note.clone(),
+                        };
+                        new_v.push(r1);
                     }
                 }
-            }
-            if flag == "-Wclippy::unwrap_used" {
-                fix_unwrap_used(file);
+                if !new_v.is_empty() {
+                    flagged_map.insert(file.to_string(), new_v);
+                }
             }
         }
-        let mut args = vec![
-            "clippy".to_string(),
-            "--message-format=json".to_string(),
-            "--fix".to_string(),
-            "--allow-dirty".to_string(),
-            "--allow-no-vcs".to_string(),
-            "--broken-code".to_string(),
-            "--".to_string(),
-        ];
-        for flag in &flags {
-            args.push(flag.to_string());
-        }
-        let mut fixed_map: HashMap<String, Vec<Ran>> = HashMap::new();
-        to_diagnostic(&mut fixed_map, args);
-        for file in flagged_map.keys() {
-            if let Ok(source) = read_to_string(file) {
-                let input = &origin_map[file];
-                let output = source.as_bytes();
-                if let Some(warnings) = flagged_map.get(file) {
-                    if let Some(fixes) = fixed_map.get(file) {
-                        let mut fixed_warnings = Vec::new();
-                        let mut remaining_warnings = Vec::new();
-                        for w in warnings {
-                            let mut found = false;
-                            for f in fixes {
-                                if w.name == f.name {
-                                    found = true;
-                                    remaining_warnings.push(f.clone());
-                                    break;
+        if !flagged_map.is_empty() {
+            let mut origin_map: HashMap<String, String> = HashMap::new();
+            let mut markup_map: HashMap<String, String> = HashMap::new();
+            for file in flagged_map.keys() {
+                if let Ok(source) = read_to_string(file) {
+                    if let Some(v) = flagged_map.get(file) {
+                        let markedup = &markup(source.as_bytes(), v.to_vec());
+                        origin_map.insert(file.to_string(), source);
+                        if let Ok(s) = std::str::from_utf8(markedup) {
+                            markup_map.insert(file.to_string(), s.to_string());
+                        }
+                    }
+                }
+                if flag == "-Wclippy::unwrap_used" {
+                    fix_unwrap_used(file);
+                }
+            }
+            let mut args = vec![
+                "clippy".to_string(),
+                "--message-format=json".to_string(),
+                "--fix".to_string(),
+                "--allow-dirty".to_string(),
+                "--allow-no-vcs".to_string(),
+                "--broken-code".to_string(),
+                "--".to_string(),
+            ];
+            for flag in &flags {
+                args.push(flag.to_string());
+            }
+            let mut fixed_map: HashMap<String, Vec<Ran>> = HashMap::new();
+            to_diagnostic(&mut fixed_map, args);
+            for file in flagged_map.keys() {
+                if let Ok(source) = read_to_string(file) {
+                    let input = &origin_map[file];
+                    let output = source.as_bytes();
+                    if let Some(warnings) = flagged_map.get(file) {
+                        if let Some(fixes) = fixed_map.get(file) {
+                            let mut fixed_warnings = Vec::new();
+                            let mut remaining_warnings = Vec::new();
+                            for w in warnings {
+                                let mut found = false;
+                                for f in fixes {
+                                    if w.name == f.name {
+                                        found = true;
+                                        remaining_warnings.push(f.clone());
+                                        break;
+                                    }
+                                }
+                                if !found {
+                                    fixed_warnings.push(w.clone());
                                 }
                             }
-                            if !found {
-                                fixed_warnings.push(w.clone());
-                            }
+                            to_fix(
+                                &flag,
+                                file,
+                                warnings.to_vec(),
+                                fixed_warnings.clone(),
+                                remaining_warnings.clone(),
+                                input,
+                                output,
+                            );
                         }
-                        to_fix(
-                            &flag,
-                            file,
-                            warnings.to_vec(),
-                            fixed_warnings.clone(),
-                            remaining_warnings.clone(),
-                            input,
-                            output,
-                        );
                     }
                 }
             }
+            for file in flagged_map.keys() {
+                let input = &origin_map[file];
+                restore_original(file, input);
+            }
         }
-        for file in flagged_map.keys() {
-            let input = &origin_map[file];
-            restore_original(file, input);
-        }
-    }
     }
 }
 
@@ -371,70 +389,78 @@ fn main() {
     let args = Args::from_args();
     let mut flags = args.flags;
     if flags.is_empty() {
-      flags = vec![
-        "ptr_arg".to_string(),
-        "too_many_arguments".to_string(),
-        "missing_errors_doc".to_string(),
-        "missing_panics_doc".to_string(),
-        "await_holding_lock".to_string(),
-        "await_holding_refcell_ref".to_string(),
-        "assertions_on_constants".to_string(),
-        "large_stack_arrays".to_string(),
-        "match_bool".to_string(),
-        "needless_bitwise_bool".to_string(),
-        "empty_enum".to_string(),
-        "empty_enum".to_string(),
-        "enum_clike_unportable_variant".to_string(),
-        "enum_glob_use".to_string(),
-        "enum_glob_use".to_string(),
-        "exhaustive_enums".to_string(),
-        "cast_precision_loss".to_string(),
-        "float_arithmetic".to_string(),
-        "float_cmp".to_string(),
-        "float_cmp_const".to_string(),
-        "imprecise_flops".to_string(),
-        "suboptimal_flops".to_string(),
-        "as_conversions".to_string(),
-        "cast_lossless".to_string(),
-        "cast_possible_truncation".to_string(),
-        "cast_possible_wrap".to_string(),
-        "cast_precision_loss".to_string(),
-        "ptr_as_ptr".to_string(),
-        "default_numeric_fallback".to_string(),
-        "checked_conversions".to_string(),
-        "integer_arithmetic".to_string(),
-        "cast_sign_loss".to_string(),
-        "modulo_arithmetic".to_string(),
-        "exhaustive_structs".to_string(),
-        "struct_excessive_bools".to_string(),
-        "unwrap_used".to_string(),
-        "expect_used".to_string(),
-        "expect_fun_call".to_string(),
-        "large_types_passed_by_value".to_string(),
-        "fn_params_excessive_bools".to_string(),
-        "trivially_copy_pass_by_ref".to_string(),
-        "inline_always".to_string(),
-        "inefficient_to_string".to_string(),
-        "dbg_macro".to_string(),
-        "wildcard_imports".to_string(),
-        "self_named_module_files".to_string(),
-        "mod_module_files".to_string(),
-        "disallowed_methods".to_string(),
-        "disallowed_script_idents".to_string(),
-        "disallowed_types".to_string(),
-      ];
-   }
-   let all_warnings = diagnose_all_warnings(flags.clone());
-   let mut count = 0;
-   all_warnings.iter().for_each(|(_k, v)| {
-       count += v.len();
-   });
-   println!("There are {} warnings in {} files.", count, all_warnings.len());
-   fix_warnings(flags, &all_warnings);
+        flags = vec![
+            "ptr_arg".to_string(),
+            "too_many_arguments".to_string(),
+            "missing_errors_doc".to_string(),
+            "missing_panics_doc".to_string(),
+            "await_holding_lock".to_string(),
+            "await_holding_refcell_ref".to_string(),
+            "assertions_on_constants".to_string(),
+            "large_stack_arrays".to_string(),
+            "match_bool".to_string(),
+            "needless_bitwise_bool".to_string(),
+            "empty_enum".to_string(),
+            "empty_enum".to_string(),
+            "enum_clike_unportable_variant".to_string(),
+            "enum_glob_use".to_string(),
+            "enum_glob_use".to_string(),
+            "exhaustive_enums".to_string(),
+            "cast_precision_loss".to_string(),
+            "float_arithmetic".to_string(),
+            "float_cmp".to_string(),
+            "float_cmp_const".to_string(),
+            "imprecise_flops".to_string(),
+            "suboptimal_flops".to_string(),
+            "as_conversions".to_string(),
+            "cast_lossless".to_string(),
+            "cast_possible_truncation".to_string(),
+            "cast_possible_wrap".to_string(),
+            "cast_precision_loss".to_string(),
+            "ptr_as_ptr".to_string(),
+            "default_numeric_fallback".to_string(),
+            "checked_conversions".to_string(),
+            "integer_arithmetic".to_string(),
+            "cast_sign_loss".to_string(),
+            "modulo_arithmetic".to_string(),
+            "exhaustive_structs".to_string(),
+            "struct_excessive_bools".to_string(),
+            "unwrap_used".to_string(),
+            "expect_used".to_string(),
+            "expect_fun_call".to_string(),
+            "large_types_passed_by_value".to_string(),
+            "fn_params_excessive_bools".to_string(),
+            "trivially_copy_pass_by_ref".to_string(),
+            "inline_always".to_string(),
+            "inefficient_to_string".to_string(),
+            "dbg_macro".to_string(),
+            "wildcard_imports".to_string(),
+            "self_named_module_files".to_string(),
+            "mod_module_files".to_string(),
+            "disallowed_methods".to_string(),
+            "disallowed_script_idents".to_string(),
+            "disallowed_types".to_string(),
+        ];
+    }
+    let all_warnings = diagnose_all_warnings(flags.clone());
+    let mut count = 0;
+    all_warnings.iter().for_each(|(_k, v)| {
+        count += v.len();
+    });
+    println!(
+        "There are {} warnings in {} files.",
+        count,
+        all_warnings.len()
+    );
+    #[cfg(fix)]
+    fix_warnings(flags, &all_warnings);
 }
 
+#[cfg(fix)]
+mod fix {
 extern crate reqwest;
 const URL: &str = "http://bertrust.s3.amazonaws.com/unwrap_used.txl";
+#[cfg(fix)]
 fn fix_unwrap_used(file: &str) {
     if !std::path::Path::new("unwrap_used.txl").exists() {
         if let Ok(resp) = reqwest::blocking::get(URL) {
@@ -465,7 +491,6 @@ fn fix_unwrap_used(file: &str) {
         }
     }
 }
-
 fn to_fix(
     flag: &str,
     file: &String,
@@ -537,6 +562,7 @@ fn to_fix(
             }
         }
     }
+}
 }
 
 fn sub_messages(children: &[Diagnostic]) -> String {

@@ -1,3 +1,5 @@
+#[cfg(fix)]
+mod fix {
 use anyhow::{anyhow, bail, Error, Result};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
@@ -54,4 +56,5 @@ impl Display for Language {
 
 extern "C" {
     fn tree_sitter_rust() -> tree_sitter::Language;
+}
 }
