@@ -364,7 +364,6 @@ fn fix_warnings(flags: Vec<String>, map: &HashMap<String, Vec<Ran>>) {
 
 // Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
 fn main() {
-
     remove_previously_generated_files("./diagnostics", "*.rs"); // marked up
     remove_previously_generated_files("./original", "*.rs"); // before fix
     remove_previously_generated_files(".", "*.2.rs"); // transformed from
@@ -556,6 +555,9 @@ fn sub_messages(children: &[Diagnostic]) -> String {
 
 // remove the previously generated files under folder, matching with the pattern
 fn remove_previously_generated_files(folder: &str, pattern: &str) {
+    if !std::path::Path::new(folder).exists() {
+        return;
+    }
     if let Ok(command) = Command::new("find")
         .args([folder, "-name", pattern])
         .stdout(Stdio::piped())
