@@ -1,31 +1,30 @@
 use cargo_metadata::{diagnostic::Diagnostic, Message};
+use serde::Serialize;
 use std::{
     collections::HashMap,
     fs::read_to_string,
     path::PathBuf,
     process::{Command, Stdio},
 };
-use serde::Serialize;
 #[cfg(patch)]
-mod patch 
-{
+mod patch {
     use git2::{Commit, DiffOptions, ObjectType, Repository, Signature, Time};
     use git2::{DiffFormat, Error, Pathspec};
 }
 
 #[cfg(fix)]
-mod fix 
-{
-    mod language;
+mod language;
+
+#[cfg(fix)]
+mod fix {
     use itertools::Itertools;
-    use tree_sitter::QueryCursor;
     use std::num::Wrapping;
+    use tree_sitter::QueryCursor;
     use tree_sitter_parsers::parse;
 }
 
 #[cfg(rustc_flags)]
-mod rustc_flags 
-{
+mod rustc_flags {
     use cargo::util::command_prelude::{ArgMatchesExt, Config};
     use cargo::{
         core::compiler::{CompileKind, RustcTargetData},
@@ -117,14 +116,14 @@ pub struct ExtractedNode<'query> {
 
 #[cfg(fix)]
 mod fix {
-use anyhow::Result;
-// Split up the Rust source_file into individual items, indiced by their start_byte offsets
-fn splitup(source: &[u8]) -> Result<HashMap<usize, &[u8]>> {
-    let mut output: HashMap<usize, &[u8]> = HashMap::new();
-    if let Ok(s) = std::str::from_utf8(source) {
-        let tree = parse(s, "rust");
-        if let Ok(query) = language::Language::Rust.parse_query(
-            "([
+    use anyhow::Result;
+    // Split up the Rust source_file into individual items, indiced by their start_byte offsets
+    fn splitup(source: &[u8]) -> Result<HashMap<usize, &[u8]>> {
+        let mut output: HashMap<usize, &[u8]> = HashMap::new();
+        if let Ok(s) = std::str::from_utf8(source) {
+            let tree = parse(s, "rust");
+            if let Ok(query) = language::Language::Rust.parse_query(
+                "([
       (const_item) @fn
       (macro_invocation) @fn
       (macro_definition) @fn
@@ -147,45 +146,45 @@ fn splitup(source: &[u8]) -> Result<HashMap<usize, &[u8]>> {
       (extern_crate_declaration) @fn
       (static_item) @fn
             ])",
-        ) {
-            let captures = query.capture_names().to_vec();
-            let mut cursor = QueryCursor::new();
-            let extracted = cursor
-                .matches(&query, tree.root_node(), source)
-                .flat_map(|query_match| query_match.captures)
-                .map(|capture| {
-                    if let Ok(idx) = usize::try_from(capture.index) {
-                        let name = &captures[idx];
-                        let node = capture.node;
-                        Ok(ExtractedNode {
-                            name,
-                            start_byte: node.start_byte(),
-                            end_byte: node.end_byte(),
-                        })
-                    } else {
-                        Ok(ExtractedNode {
-                            name: "",
-                            start_byte: 0,
-                            end_byte: 0,
-                        })
-                    }
-                })
-                .collect::<Result<Vec<ExtractedNode>>>()?;
-            for m in extracted {
-                if m.name == "fn" {
-                    if let Ok(code) = std::str::from_utf8(&source[m.start_byte..m.end_byte]) {
-                        output.insert(m.start_byte, code.as_bytes());
+            ) {
+                let captures = query.capture_names().to_vec();
+                let mut cursor = QueryCursor::new();
+                let extracted = cursor
+                    .matches(&query, tree.root_node(), source)
+                    .flat_map(|query_match| query_match.captures)
+                    .map(|capture| {
+                        if let Ok(idx) = usize::try_from(capture.index) {
+                            let name = &captures[idx];
+                            let node = capture.node;
+                            Ok(ExtractedNode {
+                                name,
+                                start_byte: node.start_byte(),
+                                end_byte: node.end_byte(),
+                            })
+                        } else {
+                            Ok(ExtractedNode {
+                                name: "",
+                                start_byte: 0,
+                                end_byte: 0,
+                            })
+                        }
+                    })
+                    .collect::<Result<Vec<ExtractedNode>>>()?;
+                for m in extracted {
+                    if m.name == "fn" {
+                        if let Ok(code) = std::str::from_utf8(&source[m.start_byte..m.end_byte]) {
+                            output.insert(m.start_byte, code.as_bytes());
+                        }
                     }
                 }
             }
         }
+        Ok(output)
     }
-    Ok(output)
-}
-// restore the original file
-fn restore_original(file_name: &String, content: &String) {
-    std::fs::write(file_name, content).ok();
-}
+    // restore the original file
+    fn restore_original(file_name: &String, content: &String) {
+        std::fs::write(file_name, content).ok();
+    }
 }
 fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<String>) {
     if let Ok(mut command) = Command::new("cargo")
@@ -397,8 +396,7 @@ fn fix_warnings(flags: Vec<String>, map: &HashMap<String, Vec<Ran>>) {
     }
 }
 
-// Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
-fn main() {
+fn run(args: Args) {
     remove_previously_generated_files("./diagnostics", "*.rs"); // marked up
     #[cfg(fix)]
     {
@@ -406,7 +404,6 @@ fn main() {
         remove_previously_generated_files(".", "*.2.rs"); // transformed from
         remove_previously_generated_files(".", "*.3.rs"); // transformed to
     }
-    let args = Args::from_args();
     let mut flags = args.flags;
     if flags.is_empty() {
         flags = vec![
@@ -474,16 +471,20 @@ fn main() {
     );
     let patch = args.patch;
     if patch.is_some() {
-        #[cfg(feature="patch")]
+        #[cfg(feature = "patch")]
         {
             if let Some(id) = patch {
                 let repo = git2::Repository::open(".").unwrap();
-                let c1 = repo.find_commit(repo.head().unwrap().target().unwrap()).unwrap();
+                let c1 = repo
+                    .find_commit(repo.head().unwrap().target().unwrap())
+                    .unwrap();
                 let c2 = repo.find_commit(git2::Oid::from_str(&id).unwrap()).unwrap();
                 let a = Some(c1.tree().unwrap());
                 let b = Some(c2.tree().unwrap());
                 let mut diffopts2 = git2::DiffOptions::new();
-                let diff = repo.diff_tree_to_tree(a.as_ref(), b.as_ref(), Some(&mut diffopts2)).unwrap();
+                let diff = repo
+                    .diff_tree_to_tree(a.as_ref(), b.as_ref(), Some(&mut diffopts2))
+                    .unwrap();
                 let mut prev_hunk = 0;
                 let mut related_warnings = Vec::new();
                 diff.print(git2::DiffFormat::Patch, |delta, hunk, line| {
@@ -491,42 +492,44 @@ fn main() {
                     let mut overlap = false;
                     if let Some(h) = hunk {
                         all_warnings.iter().for_each(|(k, v)| {
-                        v.iter().for_each(|m| {
-                            if std::path::Path::new(k) == p 
-                                && usize::try_from(h.old_start()).unwrap() <= m.end_line
-                                && usize::try_from(h.old_start() + h.old_lines()).unwrap() >= m.start_line 
-                            {
-                                // println!("@@{}:{}@@ overlaps with {}:{}", h.old_start(), h.old_lines(), m.start_line, m.end_line);
-                                overlap = true;
-                                related_warnings.push(m);
-                            }
-                        });
-                    });
-                    if overlap {
-                        if prev_hunk == 0 || prev_hunk != h.old_start() {
-                            related_warnings.iter().for_each(|m| {
-                                println!("{}", m.name);
+                            v.iter().for_each(|m| {
+                                if std::path::Path::new(k) == p
+                                    && usize::try_from(h.old_start()).unwrap() <= m.end_line
+                                    && usize::try_from(h.old_start() + h.old_lines()).unwrap()
+                                        >= m.start_line
+                                {
+                                    // println!("@@{}:{}@@ overlaps with {}:{}", h.old_start(), h.old_lines(), m.start_line, m.end_line);
+                                    overlap = true;
+                                    related_warnings.push(m);
+                                }
                             });
-                            related_warnings = Vec::new();
+                        });
+                        if overlap {
+                            if prev_hunk == 0 || prev_hunk != h.old_start() {
+                                related_warnings.iter().for_each(|m| {
+                                    println!("{}", m.name);
+                                });
+                                related_warnings = Vec::new();
+                            }
+                            match line.origin() {
+                                ' ' | '+' | '-' => print!("{}", line.origin()),
+                                _ => {}
+                            }
+                            print!("{}", std::str::from_utf8(line.content()).unwrap());
+                            prev_hunk = h.old_start();
+                            true
+                        } else {
+                            prev_hunk = h.old_start();
+                            true
                         }
-                        match line.origin() {
-                            ' ' | '+' | '-' => print!("{}", line.origin()),
-                            _ => {}
-                        }
-                        print!("{}", std::str::from_utf8(line.content()).unwrap());
-                        prev_hunk = h.old_start();
-                        true
                     } else {
-                        prev_hunk = h.old_start();
                         true
                     }
-                    } else {
-                        true
-                    }
-                }).ok();
+                })
+                .ok();
             }
-        } 
-        #[cfg(not(feature="patch"))]
+        }
+        #[cfg(not(feature = "patch"))]
         {
             println!("To use the `--patch` option, please enable the `patch` feature");
         }
@@ -536,103 +539,110 @@ fn main() {
     fix_warnings(flags, &all_warnings);
 }
 
+// Run cargo clippy to generate warnings from "foo.rs" into temporary "foo.rs.1" files
+fn main() {
+    let args = Args::from_args();
+    run(args);
+}
+
 #[cfg(fix)]
 mod fix {
-extern crate reqwest;
-const URL: &str = "http://bertrust.s3.amazonaws.com/unwrap_used.txl";
-#[cfg(fix)]
-fn fix_unwrap_used(file: &str) {
-    if !std::path::Path::new("unwrap_used.txl").exists() {
-        if let Ok(resp) = reqwest::blocking::get(URL) {
-            if let Ok(bytes) = resp.bytes() {
-                std::fs::write("unwrap_used.txl", bytes).ok();
+    extern crate reqwest;
+    const URL: &str = "http://bertrust.s3.amazonaws.com/unwrap_used.txl";
+    #[cfg(fix)]
+    fn fix_unwrap_used(file: &str) {
+        if !std::path::Path::new("unwrap_used.txl").exists() {
+            if let Ok(resp) = reqwest::blocking::get(URL) {
+                if let Ok(bytes) = resp.bytes() {
+                    std::fs::write("unwrap_used.txl", bytes).ok();
+                }
             }
         }
-    }
-    let args = vec![
-        "-q".to_string(),
-        "-s".to_string(),
-        "3000".to_string(),
-        file.to_string(),
-        "unwrap_used.txl".to_string(),
-    ];
-    if let Ok(output) = txl_rs::txl(args) {
-        std::fs::write(file, output).ok();
-        if let Ok(command) = Command::new("rustfmt")
-            .args([file])
-            .stdout(Stdio::piped())
-            .spawn()
-        {
-            if let Ok(_output) = command.wait_with_output() {
-                if let Ok(s) = std::fs::read_to_string(file) {
-                    println!("{s}");
+        let args = vec![
+            "-q".to_string(),
+            "-s".to_string(),
+            "3000".to_string(),
+            file.to_string(),
+            "unwrap_used.txl".to_string(),
+        ];
+        if let Ok(output) = txl_rs::txl(args) {
+            std::fs::write(file, output).ok();
+            if let Ok(command) = Command::new("rustfmt")
+                .args([file])
+                .stdout(Stdio::piped())
+                .spawn()
+            {
+                if let Ok(_output) = command.wait_with_output() {
+                    if let Ok(s) = std::fs::read_to_string(file) {
+                        println!("{s}");
+                    }
                 }
             }
         }
     }
-}
-fn to_fix(
-    flag: &str,
-    file: &String,
-    warnings: Vec<Ran>,
-    fixed_warnings: Vec<Ran>,
-    remaining_warnings: Vec<Ran>,
-    input: &String,
-    output: &[u8],
-) {
-    let trans_name = PathBuf::from("transform")
-        .join(flag.replace("-Wclippy::", ""))
-        .join(file);
-    let input_markedup = &markup(input.as_bytes(), warnings);
-    let output_markedup = &markup(output, remaining_warnings);
-    if let Ok(orig_items) = splitup(input_markedup) {
-        if let Ok(output_items) = splitup(output_markedup) {
-            if let Some(t) = trans_name.parent() {
-                let path = PathBuf::from(&file);
-                if let Some(p) = path.file_stem() {
-                    let mut found = false;
-                    let mut offset = Wrapping(0);
-                    for k1 in orig_items.keys().sorted() {
-                        if let Some(v1) = orig_items.get(k1) {
-                            for k2 in output_items.keys().sorted() {
-                                if let Some(v2) = output_items.get(k2) {
-                                    if (Wrapping(*k1) + offset) == Wrapping(*k2) && *v1 != *v2 {
-                                        let pp = t.join(p);
-                                        if !pp.exists() {
-                                            std::fs::create_dir_all(&pp).ok();
-                                        }
-                                        let trans_filename1 = pp.join(format!("{}.2.rs", &k1));
-                                        let trans_filename2 = pp.join(format!("{}.3.rs", &k1));
-                                        if let Ok(vv1) = std::str::from_utf8(v1) {
-                                            if let Ok(vv2) = std::str::from_utf8(v2) {
-                                                if let Ok(markedrules) =
-                                                    String::from_utf8(markup_rules(
-                                                        Wrapping(*k1),
-                                                        Wrapping(*k1) + Wrapping(vv1.len()),
-                                                        fixed_warnings.to_vec(),
-                                                    ))
-                                                {
-                                                    let _ = &trans_filename1;
-                                                    std::fs::write(
-                                                        &trans_filename1,
-                                                        format!("{}{}", markedrules, vv1),
-                                                    )
-                                                    .ok();
-                                                    std::fs::write(
-                                                        &trans_filename2,
-                                                        format!("{}{}", markedrules, vv2),
-                                                    )
-                                                    .ok();
-                                                    found = true;
-                                                    offset +=
-                                                        Wrapping(v2.len()) - Wrapping(v1.len());
+    fn to_fix(
+        flag: &str,
+        file: &String,
+        warnings: Vec<Ran>,
+        fixed_warnings: Vec<Ran>,
+        remaining_warnings: Vec<Ran>,
+        input: &String,
+        output: &[u8],
+    ) {
+        let trans_name = PathBuf::from("transform")
+            .join(flag.replace("-Wclippy::", ""))
+            .join(file);
+        let input_markedup = &markup(input.as_bytes(), warnings);
+        let output_markedup = &markup(output, remaining_warnings);
+        if let Ok(orig_items) = splitup(input_markedup) {
+            if let Ok(output_items) = splitup(output_markedup) {
+                if let Some(t) = trans_name.parent() {
+                    let path = PathBuf::from(&file);
+                    if let Some(p) = path.file_stem() {
+                        let mut found = false;
+                        let mut offset = Wrapping(0);
+                        for k1 in orig_items.keys().sorted() {
+                            if let Some(v1) = orig_items.get(k1) {
+                                for k2 in output_items.keys().sorted() {
+                                    if let Some(v2) = output_items.get(k2) {
+                                        if (Wrapping(*k1) + offset) == Wrapping(*k2) && *v1 != *v2 {
+                                            let pp = t.join(p);
+                                            if !pp.exists() {
+                                                std::fs::create_dir_all(&pp).ok();
+                                            }
+                                            let trans_filename1 = pp.join(format!("{}.2.rs", &k1));
+                                            let trans_filename2 = pp.join(format!("{}.3.rs", &k1));
+                                            if let Ok(vv1) = std::str::from_utf8(v1) {
+                                                if let Ok(vv2) = std::str::from_utf8(v2) {
+                                                    if let Ok(markedrules) =
+                                                        String::from_utf8(markup_rules(
+                                                            Wrapping(*k1),
+                                                            Wrapping(*k1) + Wrapping(vv1.len()),
+                                                            fixed_warnings.to_vec(),
+                                                        ))
+                                                    {
+                                                        let _ = &trans_filename1;
+                                                        std::fs::write(
+                                                            &trans_filename1,
+                                                            format!("{}{}", markedrules, vv1),
+                                                        )
+                                                        .ok();
+                                                        std::fs::write(
+                                                            &trans_filename2,
+                                                            format!("{}{}", markedrules, vv2),
+                                                        )
+                                                        .ok();
+                                                        found = true;
+                                                        offset +=
+                                                            Wrapping(v2.len()) - Wrapping(v1.len());
+                                                    }
                                                 }
                                             }
+                                            if !found && pp.exists() {
+                                                std::fs::remove_dir_all(&pp).ok();
+                                            }
+                                            break;
                                         }
-                                        if !found && pp.exists() {
-                                            std::fs::remove_dir_all(&pp).ok();
-                                        }
-                                        break;
                                     }
                                 }
                             }
@@ -642,7 +652,6 @@ fn to_fix(
             }
         }
     }
-}
 }
 
 fn sub_messages(children: &[Diagnostic]) -> String {
@@ -694,25 +703,104 @@ fn remove_previously_generated_files(folder: &str, pattern: &str) {
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
     use super::*;
     #[test]
-    fn test_main() {
+    #[serial]
+    fn test_diagnostics() {
+        let args = Args {
+            flags: vec![],
+            patch: None,
+        };
         let dir = std::path::Path::new("abc");
-        if !dir.exists() {
-            Command::new("cargo")
-                .args(["init", "--bin", "abc"])
-                .spawn()
-                .ok();
-            let code = r#"
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        if let Ok(command) = Command::new("cargo").args(["init", "--bin", "--vcs", "git", "abc"]).spawn() {
+            if let Ok(_output) = command.wait_with_output() {
+                let code = r#"
 fn main() {
     let s = std::fs::read_to_string("Cargo.toml").unwrap();
     println!("{s}");
 }
 "#;
-            std::fs::write("test/src/main.rs", code).ok();
+                let _ = std::fs::write("abc/src/main.rs", code);
+                let cd = std::env::current_dir().unwrap();
+                std::env::set_current_dir(dir).ok();
+                run(args);
+                assert!(std::path::Path::new("diagnostics/src/main.rs").exists());
+                if let Ok(s) = std::fs::read_to_string("diagnostics/src/main.rs") {
+                    assert_eq! (s, r###"
+fn main() {
+    let s = /*#[Warning(clippy::unwrap_used)*/std::fs::read_to_string("Cargo.toml").unwrap()/*
+#[Warning(clippy::unwrap_used)
+note: if this value is an `Err`, it will panic
+for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unwrap_used
+requested on the command line with `-W clippy::unwrap-used`*/;
+    println!("{s}");
+}
+"###);
+                }
+                std::env::set_current_dir(cd).ok();
+            }
         }
-        std::env::set_current_dir(dir).ok();
-        main();
-        assert!(!std::path::Path::new("test/transform/Wclippy::unwrap_used/0.2.rs").exists());
+    }
+
+    #[test]
+    #[serial]
+    fn test_git() {
+        let args = Args {
+            flags: vec![],
+            patch: None,
+        };
+        let dir = std::path::Path::new("abc");
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        if let Ok(command) = Command::new("cargo").args(["init", "--bin", "abc"]).spawn() {
+            if let Ok(_output) = command.wait_with_output() {
+                let code = r#"
+fn main() {
+    let s = std::fs::read_to_string("Cargo.toml").unwrap();
+    println!("{s}");
+}
+"#;
+                let _ = std::fs::write("abc/src/main.rs", code);
+                let cd = std::env::current_dir().unwrap();
+                std::env::set_current_dir(dir).ok();
+                run(args);
+                assert!(std::path::Path::new("diagnostics/src/main.rs").exists());
+                std::env::set_current_dir(cd).ok();
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_main() {
+        let dir = std::path::Path::new("abc");
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        if let Ok(command) = Command::new("cargo").args(["init", "--bin", "abc"]).spawn() {
+            if let Ok(_output) = command.wait_with_output() {
+                let code = r#"
+fn main() {
+    let s = std::fs::read_to_string("Cargo.toml").unwrap();
+    println!("{s}");
+}
+"#;
+                let cd = std::env::current_dir().unwrap();
+                std::env::set_current_dir(dir).ok();
+                std::fs::write("src/main.rs", code).ok();
+                let args = Args {
+                    flags: vec![],
+                    patch: None,
+                };
+                run(args);
+                assert!(!std::path::Path::new("test/transform/Wclippy::unwrap_used/0.2.rs").exists());
+                std::env::set_current_dir(cd).ok();
+            }
+        }
     }
 }
