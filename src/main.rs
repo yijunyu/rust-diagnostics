@@ -55,8 +55,8 @@ struct Ran {
     note: String,
     start_line: usize,
     end_line: usize,
-    end_column: usize,
-    start_column: usize,
+    // start_column: usize,
+    // end_column: usize,
 }
 
 // insert diagnostic code as an markup element around the code causing the diagnostic message
@@ -208,11 +208,11 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<String>) {
                                             message_code.clone().code
                                         ),
                                         start: x,
-                                        start_line: usize::try_from(s.line_start).unwrap(),
-                                        start_column: usize::try_from(s.column_start).unwrap(),
+                                        start_line: s.line_start,
+                                        // start_column: s.column_start,
                                         end: y,
-                                        end_line: usize::try_from(s.line_end).unwrap(),
-                                        end_column: usize::try_from(s.column_end).unwrap(),
+                                        end_line: s.line_end,
+                                        // end_column: s.column_end,
                                         suggestion: format!("{:?}", s.suggested_replacement),
                                         note: format!("{:?}", sub_messages(&msg.message.children)),
                                     };
@@ -286,7 +286,7 @@ fn diagnose_all_warnings(flags: Vec<String>) -> HashMap<String, Vec<Ran>> {
         for file in map.keys() {
             let markedup = &markup_map[file];
             let file_name = PathBuf::from("diagnostics").join(file);
-            println!("Marked warning(s) into {:?}", &file_name);
+            // println!("Marked warning(s) into {:?}", &file_name);
             if let Some(p) = file_name.parent() {
                 if !p.exists() {
                     std::fs::create_dir_all(p).ok();
@@ -484,29 +484,40 @@ fn main() {
                 let b = Some(c2.tree().unwrap());
                 let mut diffopts2 = git2::DiffOptions::new();
                 let diff = repo.diff_tree_to_tree(a.as_ref(), b.as_ref(), Some(&mut diffopts2)).unwrap();
-                println!("id = {id}");
-                diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
-                    let p = _delta.old_file().path().unwrap();
+                let mut prev_hunk = 0;
+                let mut related_warnings = Vec::new();
+                diff.print(git2::DiffFormat::Patch, |delta, hunk, line| {
+                    let p = delta.old_file().path().unwrap();
                     let mut overlap = false;
-                    if let Some(h) = _hunk {
-                    all_warnings.iter().for_each(|(k, v)| {
+                    if let Some(h) = hunk {
+                        all_warnings.iter().for_each(|(k, v)| {
                         v.iter().for_each(|m| {
                             if std::path::Path::new(k) == p 
                                 && usize::try_from(h.old_start()).unwrap() <= m.end_line
                                 && usize::try_from(h.old_start() + h.old_lines()).unwrap() >= m.start_line 
                             {
+                                // println!("@@{}:{}@@ overlaps with {}:{}", h.old_start(), h.old_lines(), m.start_line, m.end_line);
                                 overlap = true;
+                                related_warnings.push(m);
                             }
                         });
                     });
                     if overlap {
+                        if prev_hunk == 0 || prev_hunk != h.old_start() {
+                            related_warnings.iter().for_each(|m| {
+                                println!("{}", m.name);
+                            });
+                            related_warnings = Vec::new();
+                        }
                         match line.origin() {
                             ' ' | '+' | '-' => print!("{}", line.origin()),
                             _ => {}
                         }
                         print!("{}", std::str::from_utf8(line.content()).unwrap());
+                        prev_hunk = h.old_start();
                         true
                     } else {
+                        prev_hunk = h.old_start();
                         true
                     }
                     } else {
