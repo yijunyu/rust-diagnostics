@@ -1,4 +1,5 @@
 #![feature(internal_output_capture)]
+use std::sync::Arc;
 use cargo_metadata::{diagnostic::Diagnostic, Message};
 use serde::Serialize;
 use std::{
