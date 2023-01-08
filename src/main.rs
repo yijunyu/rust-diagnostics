@@ -1,5 +1,4 @@
 #![feature(internal_output_capture)]
-use std::sync::Arc;
 use cargo_metadata::{diagnostic::Diagnostic, Message};
 use serde::Serialize;
 use std::{
@@ -45,9 +44,12 @@ struct Args {
     #[structopt(name = "patch", long)]
     /// reduce patch id to hunks that may be relevant to the warnings
     patch: Option<String>,
+    #[structopt(name = "confirm", long)]
+    /// confirm whether the related warnings of current revision are indeed fixed by the patch
+    confirm: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct Ran {
     name: String,
     start: usize,
@@ -58,6 +60,7 @@ struct Ran {
     end_line: usize,
     // start_column: usize,
     // end_column: usize,
+    fixed: bool,
 }
 
 // insert diagnostic code as an markup element around the code causing the diagnostic message
@@ -216,6 +219,7 @@ fn to_diagnostic(map: &mut HashMap<String, Vec<Ran>>, args: Vec<String>) {
                                         // end_column: s.column_end,
                                         suggestion: format!("{:?}", s.suggested_replacement),
                                         note: format!("{:?}", sub_messages(&msg.message.children)),
+                                        fixed: false,
                                     };
                                     let filename = s.file_name;
                                     match map.get_mut(&filename) {
@@ -398,6 +402,22 @@ fn fix_warnings(flags: Vec<String>, map: &HashMap<String, Vec<Ran>>) {
     }
 }
 
+// run the following bash commands
+// ```bash
+// git checkout $commit_id
+// ```
+fn checkout(commit_id: git2::Oid) {
+    let repo = git2::Repository::open(".").unwrap();
+    let commit = repo.find_commit(commit_id);
+    repo.reset(commit.unwrap().as_object(),
+               git2::ResetType::Hard,
+               Some(git2::build::CheckoutBuilder::new()
+                .force()
+                .remove_untracked(true)),
+               ).ok();
+}
+
+
 fn run(args: Args) {
     remove_previously_generated_files("./diagnostics", "*.rs"); // marked up
     #[cfg(fix)]
@@ -461,7 +481,7 @@ fn run(args: Args) {
             "disallowed_types".to_string(),
         ];
     }
-    let all_warnings = diagnose_all_warnings(flags.clone());
+    let mut all_warnings = diagnose_all_warnings(flags.clone());
     let mut count = 0;
     all_warnings.iter().for_each(|(_k, v)| {
         count += v.len();
@@ -477,6 +497,7 @@ fn run(args: Args) {
         {
             if let Some(id) = patch {
                 let repo = git2::Repository::open(".").unwrap();
+                let old_id = repo.head().unwrap().target().unwrap();
                 let c1 = repo
                     .find_commit(repo.head().unwrap().target().unwrap())
                     .unwrap();
@@ -488,36 +509,40 @@ fn run(args: Args) {
                     .diff_tree_to_tree(a.as_ref(), b.as_ref(), Some(&mut diffopts2))
                     .unwrap();
                 let mut prev_hunk = 0;
-                let mut related_warnings = Vec::new();
+                let mut related_warnings = std::collections::HashSet::new();
                 diff.print(git2::DiffFormat::Patch, |delta, hunk, line| {
                     let p = delta.old_file().path().unwrap();
                     let mut overlap = false;
                     if let Some(h) = hunk {
-                        all_warnings.iter().for_each(|(k, v)| {
-                            v.iter().for_each(|m| {
+                        all_warnings.iter_mut().for_each(|(k, v)| {
+                            v.iter_mut().for_each(|m| {
                                 if std::path::Path::new(k) == p
                                     && usize::try_from(h.old_start()).unwrap() <= m.end_line
                                     && usize::try_from(h.old_start() + h.old_lines()).unwrap()
                                         >= m.start_line
                                 {
-                                    // println!("@@{}:{}@@ overlaps with {}:{}", h.old_start(), h.old_lines(), m.start_line, m.end_line);
                                     overlap = true;
-                                    related_warnings.push(m);
+                                    m.fixed = true;
+                                    related_warnings.insert(m.clone());
                                 }
                             });
                         });
                         if overlap {
                             if prev_hunk == 0 || prev_hunk != h.old_start() {
                                 related_warnings.iter().for_each(|m| {
-                                    println!("{}", m.name);
+                                    if ! args.confirm {
+                                        println!("{}", m.name);
+                                    }
                                 });
-                                related_warnings = Vec::new();
+                                related_warnings = std::collections::HashSet::new();
                             }
-                            match line.origin() {
-                                ' ' | '+' | '-' => print!("{}", line.origin()),
-                                _ => {}
+                            if ! args.confirm {
+                                match line.origin() {
+                                    ' ' | '+' | '-' => print!("{}", line.origin()),
+                                    _ => {}
+                                }
+                                print!("{}", std::str::from_utf8(line.content()).unwrap());
                             }
-                            print!("{}", std::str::from_utf8(line.content()).unwrap());
                             prev_hunk = h.old_start();
                             true
                         } else {
@@ -529,6 +554,70 @@ fn run(args: Args) {
                     }
                 })
                 .ok();
+                if args.confirm {
+                    // We go through the 2nd pass, to output only those confirmed fixes
+                    let oid = git2::Oid::from_str(&id).unwrap();
+                    checkout(oid);
+                    let all_new_warnings = diagnose_all_warnings(flags);
+                    all_warnings.iter_mut().for_each(|(k1, v1)| {
+                        v1.iter_mut().for_each(|m1| {
+                            if m1.fixed {
+                                let mut confirmed = true;
+                                all_new_warnings.iter().for_each(|(k2, v2)| {
+                                    v2.iter().for_each(|m2| {
+                                        if k1 == k2 && m1.start_line <= m2.end_line && m1.end_line >= m2.start_line {
+                                           confirmed = false;
+                                        }
+                                    });
+                                });
+                                m1.fixed = confirmed;
+                            }
+                        });
+                    });
+                    checkout(old_id);
+                    prev_hunk = 0;
+                    related_warnings = std::collections::HashSet::new();
+                    diff.print(git2::DiffFormat::Patch, |delta, hunk, line| {
+                        let p = delta.old_file().path().unwrap();
+                        let mut overlap = false;
+                        if let Some(h) = hunk {
+                            all_warnings.iter_mut().for_each(|(k, v)| {
+                                v.iter_mut().for_each(|m| {
+                                    if m.fixed && std::path::Path::new(k) == p
+                                        && usize::try_from(h.old_start()).unwrap() <= m.end_line
+                                        && usize::try_from(h.old_start() + h.old_lines()).unwrap()
+                                            >= m.start_line
+                                    {
+                                        // println!("@@{}:{}@@ overlaps with {}:{}", h.old_start(), h.old_lines(), m.start_line, m.end_line);
+                                        overlap = true;
+                                        related_warnings.insert(m.clone());
+                                    }
+                                });
+                            });
+                            if overlap {
+                                if prev_hunk == 0 || prev_hunk != h.old_start() {
+                                    related_warnings.iter().for_each(|m| {
+                                        println!("{}", m.name);
+                                    });
+                                    related_warnings = std::collections::HashSet::new();
+                                }
+                                match line.origin() {
+                                    ' ' | '+' | '-' => print!("{}", line.origin()),
+                                    _ => {}
+                                }
+                                print!("{}", std::str::from_utf8(line.content()).unwrap());
+                                prev_hunk = h.old_start();
+                                true
+                            } else {
+                                prev_hunk = h.old_start();
+                                true
+                            }
+                        } else {
+                            true
+                        }
+                    })
+                    .ok();
+                }
             }
         }
         #[cfg(not(feature = "patch"))]
@@ -713,6 +802,7 @@ mod tests {
         let args = Args {
             flags: vec![],
             patch: None,
+            confirm: false,
         };
         let dir = std::path::Path::new("abc");
         if dir.exists() {
@@ -769,32 +859,43 @@ requested on the command line with `-W clippy::unwrap-used`*/;
             let result = repo.commit(Some("HEAD"), &author, &author, message, &tree, &[&parent]);
             result.and_then(|oid| {
                 repo.find_object(oid, None).and_then(|object| {
-                    repo.reset(&object, git2::ResetType::Hard, None).map(|_| oid)
+                    repo.reset(&object, git2::ResetType::Soft, None).map(|_| oid)
                 })
             })
         } else {
             let result = repo.commit(Some("HEAD"), &author, &author, message, &tree, &[]);
             result.and_then(|oid| {
                 repo.find_object(oid, None).and_then(|object| {
-                    repo.reset(&object, git2::ResetType::Hard, None).map(|_| oid)
+                    repo.reset(&object, git2::ResetType::Soft, None).map(|_| oid)
                 })
             })
         }
     }
 
-    // run the following bash commands
-    // ```bash
-    // git checkout $commit_id
-    // ```
-    fn checkout(commit_id: git2::Oid) {
-        let repo = git2::Repository::open(".").unwrap();
-        let commit = repo.find_commit(commit_id);
-        repo.reset(commit.unwrap().as_object(),
-                   git2::ResetType::Hard,
-                   Some(git2::build::CheckoutBuilder::new()
-                    .force()
-                    .remove_untracked(true)),
-                   ).ok();
+    fn setup(code: &str, fix: &str) -> Result<(std::path::PathBuf, git2::Oid), std::io::Error> {
+        let dir = std::path::Path::new("abc");
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        if let Ok(command) = Command::new("cargo").args(["init", "--vcs", "git", "--bin", "abc"]).spawn() {
+            if let Ok(_output) = command.wait_with_output() {
+                let cd = std::env::current_dir().unwrap();
+                std::env::set_current_dir(dir).ok();
+                let init_commit = commit_file("init", "src/main.rs", code).ok().unwrap();
+                let update_commit = commit_file("update", "src/main.rs", fix).ok().unwrap();
+                checkout(init_commit);
+                Ok((cd, update_commit))
+            } else {
+                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Cannot initiate the cargo project"))
+            }
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Cannot checkout"))
+        }
+    }
+
+    fn teardown(cd: std::path::PathBuf, update_commit: git2::Oid) {
+        checkout(update_commit);
+        std::env::set_current_dir(cd).ok();
     }
 
     #[test]
@@ -815,42 +916,33 @@ requested on the command line with `-W clippy::unwrap-used`*/;
     // rust-diagnostics --patch $update_commit
     // cd -
     // ```
-    fn git() {
-        let dir = std::path::Path::new("abc");
-        if dir.exists() {
-            let _ = std::fs::remove_dir_all(dir);
-        }
-        if let Ok(command) = Command::new("cargo").args(["init", "--vcs", "git", "--bin", "abc"]).spawn() {
-            if let Ok(_output) = command.wait_with_output() {
-                let init = r#"
+    fn fixed() {
+       if let Ok((cd, update_commit)) = setup(r#"
 fn main() {
     let s = std::fs::read_to_string("Cargo.toml").unwrap();
     println!("{s}");
 }
-"#;
-                let update = r#"
+"#,r#"
 fn main() {
     if let Ok(s) = std::fs::read_to_string("Cargo.toml") {
         println!("{s}");
     }
 }
-"#;
-                let cd = std::env::current_dir().unwrap();
-                std::env::set_current_dir(dir).ok();
-                let init_commit = commit_file("init", "src/main.rs", init);
-                let update_commit = commit_file("update", "src/main.rs", update).ok().unwrap();
-                checkout(init_commit.unwrap());
-                let args = Args {
-                    flags: vec![],
-                    patch: Some(format!("{update_commit}")),
-                };
-                std::io::set_output_capture(Some(Default::default()));
-                run(args);
-                let captured = std::io::set_output_capture(None).unwrap();
-                let captured = Arc::try_unwrap(captured).unwrap();
-                let captured = captured.into_inner().unwrap();
-                let captured = String::from_utf8(captured).unwrap();
-                assert_eq!(captured, r###"There are 1 warnings in 1 files.
+"#) 
+        {
+            let debug_confirm = true;
+            let args = Args {
+                flags: vec![],
+                patch: Some(format!("{update_commit}")),
+                confirm: debug_confirm,
+            };
+            std::io::set_output_capture(Some(Default::default()));
+            run(args);
+            let captured = std::io::set_output_capture(None).unwrap();
+            let captured = Arc::try_unwrap(captured).unwrap();
+            let captured = captured.into_inner().unwrap();
+            let captured = String::from_utf8(captured).unwrap();
+            assert_eq!(captured, r###"There are 1 warnings in 1 files.
 #[Warning(clippy::unwrap_used)
 @@ -1,5 +1,6 @@
  
@@ -862,8 +954,39 @@ fn main() {
 +    }
  }
 "###);
-                std::env::set_current_dir(cd).ok();
-            }
+            teardown(cd, update_commit);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn unfixed() {
+       if let Ok((cd, update_commit)) = setup(r#"
+fn main() {
+    let s = std::fs::read_to_string("Cargo.toml").unwrap();
+    println!("{s}");
+}
+"#,r#"
+fn main() {
+    let s = std::fs::read_to_string("Cargo.toml").unwrap();
+    println!("The configuration file is: {s}");
+}
+"#) 
+        {
+            let args = Args {
+                flags: vec![],
+                patch: Some(format!("{update_commit}")),
+                confirm: true,
+            };
+            std::io::set_output_capture(Some(Default::default()));
+            run(args);
+            let captured = std::io::set_output_capture(None).unwrap();
+            let captured = Arc::try_unwrap(captured).unwrap();
+            let captured = captured.into_inner().unwrap();
+            let captured = String::from_utf8(captured).unwrap();
+            assert_eq!(captured, r###"There are 1 warnings in 1 files.
+"###);
+            teardown(cd, update_commit);
         }
     }
 
@@ -888,6 +1011,7 @@ fn main() {
                 let args = Args {
                     flags: vec![],
                     patch: None,
+                    confirm: false,
                 };
                 run(args);
                 assert!(!std::path::Path::new("test/transform/Wclippy::unwrap_used/0.2.rs").exists());
