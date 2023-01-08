@@ -1,3 +1,5 @@
+#![feature(internal_output_capture)]
+use std::sync::Arc;
 use cargo_metadata::{diagnostic::Diagnostic, Message};
 use serde::Serialize;
 use std::{
@@ -707,7 +709,7 @@ mod tests {
     use super::*;
     #[test]
     #[serial]
-    fn test_diagnostics() {
+    fn diagnostics() {
         let args = Args {
             flags: vec![],
             patch: None,
@@ -746,30 +748,120 @@ requested on the command line with `-W clippy::unwrap-used`*/;
         }
     }
 
+    // run the following bash commands
+    // ```bash
+    // cat $code > $filename
+    // git add $filename
+    // git commit -am $message
+    // ```
+    fn commit_file(message: &str, filename: &str, code: &str) -> Result<git2::Oid, git2::Error> {
+        std::fs::write(filename, code).ok();
+        let repo = git2::Repository::open(std::path::Path::new(".")).unwrap();
+        let author = git2::Signature::now("Yijun Yu", "y.yu@open.ac.uk").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(filename)).ok();
+        let index_oid = index.write_tree_to(&repo).unwrap();
+        let tree = repo.find_tree(index_oid).unwrap();
+        let h = repo.head();
+        if let Ok(head) = h {
+            let oid = head.target().unwrap();
+            let parent = repo.find_commit(oid).unwrap();
+            let result = repo.commit(Some("HEAD"), &author, &author, message, &tree, &[&parent]);
+            result.and_then(|oid| {
+                repo.find_object(oid, None).and_then(|object| {
+                    repo.reset(&object, git2::ResetType::Hard, None).map(|_| oid)
+                })
+            })
+        } else {
+            let result = repo.commit(Some("HEAD"), &author, &author, message, &tree, &[]);
+            result.and_then(|oid| {
+                repo.find_object(oid, None).and_then(|object| {
+                    repo.reset(&object, git2::ResetType::Hard, None).map(|_| oid)
+                })
+            })
+        }
+    }
+
+    // run the following bash commands
+    // ```bash
+    // git checkout $commit_id
+    // ```
+    fn checkout(commit_id: git2::Oid) {
+        let repo = git2::Repository::open(".").unwrap();
+        let commit = repo.find_commit(commit_id);
+        repo.reset(commit.unwrap().as_object(),
+                   git2::ResetType::Hard,
+                   Some(git2::build::CheckoutBuilder::new()
+                    .force()
+                    .remove_untracked(true)),
+                   ).ok();
+    }
+
     #[test]
     #[serial]
-    fn test_git() {
-        let args = Args {
-            flags: vec![],
-            patch: None,
-        };
+    // run the following bash commands
+    // ```bash
+    // rm -rf abc
+    // cargo init --vcs git --bin abc
+    // cd abc
+    // cat $code1 > src/main.rs
+    // git add src/main.rs
+    // git commit -am init
+    // init_commit=$(git rev-parse HEAD)
+    // cat $code2 > src/main.rs
+    // git commit -am update
+    // update_commit=$(git rev-parse HEAD)
+    // git checkout $init_commit
+    // rust-diagnostics --patch $update_commit
+    // cd -
+    // ```
+    fn git() {
         let dir = std::path::Path::new("abc");
         if dir.exists() {
             let _ = std::fs::remove_dir_all(dir);
         }
-        if let Ok(command) = Command::new("cargo").args(["init", "--bin", "abc"]).spawn() {
+        if let Ok(command) = Command::new("cargo").args(["init", "--vcs", "git", "--bin", "abc"]).spawn() {
             if let Ok(_output) = command.wait_with_output() {
-                let code = r#"
+                let init = r#"
 fn main() {
     let s = std::fs::read_to_string("Cargo.toml").unwrap();
     println!("{s}");
 }
 "#;
-                let _ = std::fs::write("abc/src/main.rs", code);
+                let update = r#"
+fn main() {
+    if let Ok(s) = std::fs::read_to_string("Cargo.toml") {
+        println!("{s}");
+    }
+}
+"#;
                 let cd = std::env::current_dir().unwrap();
                 std::env::set_current_dir(dir).ok();
+                let init_commit = commit_file("init", "src/main.rs", init);
+                let update_commit = commit_file("update", "src/main.rs", update).ok().unwrap();
+                checkout(init_commit.unwrap());
+                let args = Args {
+                    flags: vec![],
+                    patch: Some(format!("{update_commit}")),
+                };
+                std::io::set_output_capture(Some(Default::default()));
                 run(args);
-                assert!(std::path::Path::new("diagnostics/src/main.rs").exists());
+                let captured = std::io::set_output_capture(None).unwrap();
+                let captured = Arc::try_unwrap(captured).unwrap();
+                let captured = captured.into_inner().unwrap();
+                let captured = String::from_utf8(captured).unwrap();
+                assert_eq!(captured, r###"There are 1 warnings in 1 files.
+#[Warning(clippy::unwrap_used)
+@@ -1,5 +1,6 @@
+ 
+ fn main() {
+-    let s = std::fs::read_to_string("Cargo.toml").unwrap();
+-    println!("{s}");
++    if let Ok(s) = std::fs::read_to_string("Cargo.toml") {
++        println!("{s}");
++    }
+ }
+"###);
                 std::env::set_current_dir(cd).ok();
             }
         }
@@ -777,7 +869,7 @@ fn main() {
 
     #[test]
     #[serial]
-    fn test_main() {
+    fn main() {
         let dir = std::path::Path::new("abc");
         if dir.exists() {
             let _ = std::fs::remove_dir_all(dir);

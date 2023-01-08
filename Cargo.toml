@@ -35,5 +35,4 @@ patch = ["dep:git2"]
 cc = { version = "1.0.72", features = [ "parallel" ] }
 
 [dev-dependencies]
-insta = "1.24.1"
 serial_test = "0.10.0"
